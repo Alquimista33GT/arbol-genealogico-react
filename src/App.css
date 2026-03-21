@@ -1,0 +1,77 @@
+import { useEffect, useState } from "react";
+import { auth } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import Login from "./Login";
+import FamilyTreeApp from "./FamilyTreeApp";
+import PublicTreePage from "./PublicTreePage";
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const params = new URLSearchParams(window.location.search);
+  const publicSlug = params.get("public");
+
+  useEffect(() => {
+    if (publicSlug) {
+      setAuthLoading(false);
+      return;
+    }
+
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser || null);
+      setAuthLoading(false);
+    });
+
+    return () => unsub();
+  }, [publicSlug]);
+
+  if (authLoading) {
+    return (
+      <div style={loadingPageStyle}>
+        <div style={loadingCardStyle}>Cargando aplicación...</div>
+      </div>
+    );
+  }
+
+  if (publicSlug) {
+    return <PublicTreePage slug={publicSlug} />;
+  }
+
+  if (!user) {
+    return (
+      <div style={loginPageStyle}>
+        <Login />
+      </div>
+    );
+  }
+
+  return <FamilyTreeApp user={user} />;
+}
+
+const loadingPageStyle = {
+  minHeight: "100vh",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "linear-gradient(180deg, #eefcf3 0%, #f7fff9 100%)",
+};
+
+const loadingCardStyle = {
+  background: "#fff",
+  padding: "24px 32px",
+  borderRadius: "18px",
+  boxShadow: "0 12px 35px rgba(0,0,0,0.08)",
+  fontSize: "18px",
+  fontWeight: "700",
+  color: "#1f2937",
+};
+
+const loginPageStyle = {
+  minHeight: "100vh",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "linear-gradient(180deg, #eefcf3 0%, #f7fff9 100%)",
+  padding: "20px",
+};
