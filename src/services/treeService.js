@@ -1,52 +1,25 @@
 import {
   collection,
-  addDoc,
   doc,
   getDoc,
   getDocs,
   setDoc,
   deleteDoc,
   serverTimestamp,
-  query,
-  orderBy,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
-function generateSlug(length = 14) {
-  const chars = "abcdefghijkmnpqrstuvwxyz23456789";
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
-}
-
-export async function createTree(uid, data = {}) {
-  const treesRef = collection(db, "users", uid, "trees");
-
-  const payload = {
-    name: data.name || "Mi árbol familiar",
-    description: data.description || "",
-    ownerUid: uid,
-    isPublic: false,
-    publicSlug: "",
-    people: Array.isArray(data.people) ? data.people : [],
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-
-  const docRef = await addDoc(treesRef, payload);
-  return docRef.id;
+function generateSlug() {
+  return Math.random().toString(36).substring(2, 10);
 }
 
 export async function getUserTrees(uid) {
-  const treesRef = collection(db, "users", uid, "trees");
-  const q = query(treesRef, orderBy("updatedAt", "desc"));
-  const snap = await getDocs(q);
+  const ref = collection(db, "users", uid, "trees");
+  const snap = await getDocs(ref);
 
-  return snap.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
+  return snap.docs.map((item) => ({
+    id: item.id,
+    ...item.data(),
   }));
 }
 
@@ -62,34 +35,41 @@ export async function getTree(uid, treeId) {
   };
 }
 
-export async function saveTree(uid, treeId, data = {}) {
-  const ref = doc(db, "users", uid, "trees", treeId);
+export async function createTree(uid, data = {}) {
+  const newId = doc(collection(db, "users", uid, "trees")).id;
 
-  const payload = {
-    name: data.name || "Mi árbol familiar",
-    description: data.description || "",
-    ownerUid: uid,
-    people: Array.isArray(data.people) ? data.people : [],
-    isPublic: !!data.isPublic,
-    publicSlug: data.publicSlug || "",
+  await setDoc(doc(db, "users", uid, "trees", newId), {
+    name: data.name || "Mi árbol",
+    people: data.people || [],
+    isPublic: false,
+    publicSlug: "",
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  };
+  });
 
-  await setDoc(ref, payload, { merge: true });
+  return newId;
+}
 
-  if (payload.isPublic && payload.publicSlug) {
-    const publicRef = doc(db, "publicTrees", payload.publicSlug);
+export async function saveTree(uid, treeId, data = {}) {
+  await setDoc(
+    doc(db, "users", uid, "trees", treeId),
+    {
+      name: data.name || "Mi árbol",
+      people: Array.isArray(data.people) ? data.people : [],
+      isPublic: !!data.isPublic,
+      publicSlug: data.publicSlug || "",
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
 
+  if (data.isPublic && data.publicSlug) {
     await setDoc(
-      publicRef,
+      doc(db, "publicTrees", data.publicSlug),
       {
-        slug: payload.publicSlug,
-        treeId,
-        ownerUid: uid,
-        name: payload.name,
-        description: payload.description,
-        people: payload.people,
-        isPublic: true,
+        name: data.name || "Árbol público",
+        people: Array.isArray(data.people) ? data.people : [],
+        slug: data.publicSlug,
         updatedAt: serverTimestamp(),
       },
       { merge: true }
@@ -101,55 +81,34 @@ export async function removeTree(uid, treeId) {
   const tree = await getTree(uid, treeId);
 
   if (tree?.publicSlug) {
-    const publicRef = doc(db, "publicTrees", tree.publicSlug);
-    await deleteDoc(publicRef);
+    await deleteDoc(doc(db, "publicTrees", tree.publicSlug));
   }
 
-  const ref = doc(db, "users", uid, "trees", treeId);
-  await deleteDoc(ref);
+  await deleteDoc(doc(db, "users", uid, "trees", treeId));
 }
 
 export async function makeTreePublic(uid, treeId, data = {}) {
-  const tree = await getTree(uid, treeId);
-  if (!tree) {
-    throw new Error("No se encontró el árbol");
-  }
-
-  const slug = tree.publicSlug || generateSlug();
-
-  const privateRef = doc(db, "users", uid, "trees", treeId);
-  const publicRef = doc(db, "publicTrees", slug);
-
-  const name = data.name || tree.name || "Mi árbol familiar";
-  const description = data.description ?? tree.description ?? "";
-  const people = Array.isArray(data.people) ? data.people : tree.people || [];
+  const existing = await getTree(uid, treeId);
+  const slug = existing?.publicSlug || generateSlug();
 
   await setDoc(
-    privateRef,
+    doc(db, "publicTrees", slug),
     {
-      name,
-      description,
-      ownerUid: uid,
-      people,
-      isPublic: true,
-      publicSlug: slug,
+      name: data.name || "Árbol público",
+      people: Array.isArray(data.people) ? data.people : [],
+      slug,
       updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
     },
     { merge: true }
   );
 
   await setDoc(
-    publicRef,
+    doc(db, "users", uid, "trees", treeId),
     {
-      slug,
-      treeId,
-      ownerUid: uid,
-      name,
-      description,
-      people,
       isPublic: true,
+      publicSlug: slug,
       updatedAt: serverTimestamp(),
-      createdAt: tree.createdAt || serverTimestamp(),
     },
     { merge: true }
   );
@@ -158,15 +117,20 @@ export async function makeTreePublic(uid, treeId, data = {}) {
 }
 
 export async function makeTreePrivate(uid, treeId) {
-  const tree = await getTree(uid, treeId);
-  if (!tree) {
-    throw new Error("No se encontró el árbol");
+  const treeRef = doc(db, "users", uid, "trees", treeId);
+  const snap = await getDoc(treeRef);
+
+  if (!snap.exists()) return;
+
+  const data = snap.data();
+  const slug = data.publicSlug;
+
+  if (slug) {
+    await deleteDoc(doc(db, "publicTrees", slug));
   }
 
-  const privateRef = doc(db, "users", uid, "trees", treeId);
-
   await setDoc(
-    privateRef,
+    treeRef,
     {
       isPublic: false,
       publicSlug: "",
@@ -174,14 +138,9 @@ export async function makeTreePrivate(uid, treeId) {
     },
     { merge: true }
   );
-
-  if (tree.publicSlug) {
-    const publicRef = doc(db, "publicTrees", tree.publicSlug);
-    await deleteDoc(publicRef);
-  }
 }
 
-export async function getPublicTreeBySlug(slug) {
+export async function getPublicTree(slug) {
   const ref = doc(db, "publicTrees", slug);
   const snap = await getDoc(ref);
 

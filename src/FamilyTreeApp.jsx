@@ -92,10 +92,10 @@ function measureTree(node, level = 0, layout = { levels: [], nodes: [], edges: [
   return layout;
 }
 
-function createPositions(layout) {
+function createPositions(layout, isMobile = false) {
   const positions = {};
-  const gapX = 580;
-  const gapY = 540;
+  const gapX = isMobile ? 250 : 580;
+  const gapY = isMobile ? 320 : 540;
 
   layout.levels.forEach((nodes, levelIndex) => {
     const count = nodes.length;
@@ -148,12 +148,31 @@ function PersonMini({
   onDelete,
   onQuickAddPartner,
   onQuickAddChild,
+  isMobile,
+  readOnly = false,
 }) {
   const details = personSummary(person);
+  const smallButtonStyle = {
+    padding: isMobile ? "7px 6px" : "11px 10px",
+    fontSize: isMobile ? "10px" : "13px",
+  };
 
   return (
-    <div xmlns="http://www.w3.org/1999/xhtml" style={personMiniStyle}>
-      <div style={personMiniImageWrapStyle}>
+    <div
+      xmlns="http://www.w3.org/1999/xhtml"
+      style={{
+        ...personMiniStyle,
+        width: isMobile ? "130px" : "205px",
+        minHeight: isMobile ? "190px" : "290px",
+        padding: isMobile ? "8px" : "12px",
+      }}
+    >
+      <div
+        style={{
+          ...personMiniImageWrapStyle,
+          height: isMobile ? "58px" : "96px",
+        }}
+      >
         {person.photo ? (
           <img src={person.photo} alt={person.name} style={imageStyle} />
         ) : (
@@ -161,9 +180,26 @@ function PersonMini({
         )}
       </div>
 
-      <div style={personMiniNameStyle}>{person.name}</div>
+      <div
+        style={{
+          ...personMiniNameStyle,
+          fontSize: isMobile ? "11px" : "15px",
+          minHeight: isMobile ? "24px" : "38px",
+          marginBottom: isMobile ? "6px" : "10px",
+        }}
+      >
+        {person.name}
+      </div>
 
-      <div style={personMiniInfoStyle}>
+      <div
+        style={{
+          ...personMiniInfoStyle,
+          minHeight: isMobile ? "40px" : "64px",
+          fontSize: isMobile ? "9px" : "11px",
+          marginBottom: isMobile ? "6px" : "10px",
+          padding: isMobile ? "6px" : "8px",
+        }}
+      >
         {details.length > 0 ? (
           details.map((item, idx) => <div key={idx}>{item}</div>)
         ) : (
@@ -171,27 +207,37 @@ function PersonMini({
         )}
       </div>
 
-      <div style={personMiniButtonsStyle}>
-        <button style={editButtonStyle} onClick={() => onEdit(person)}>
-          Editar
-        </button>
-        <button style={deleteButtonStyle} onClick={() => onDelete(person.id)}>
-          Eliminar
-        </button>
-      </div>
+      {!readOnly ? (
+        <>
+          <div style={personMiniButtonsStyle}>
+            <button style={{ ...editButtonStyle, ...smallButtonStyle }} onClick={() => onEdit(person)}>
+              Editar
+            </button>
+            <button style={{ ...deleteButtonStyle, ...smallButtonStyle }} onClick={() => onDelete(person.id)}>
+              Eliminar
+            </button>
+          </div>
 
-      <div style={personMiniButtonsStyle}>
-        {!person.partnerId ? (
-          <button style={softGreenButtonStyle} onClick={() => onQuickAddPartner(person)}>
-            + Pareja
-          </button>
-        ) : (
-          <div style={{ flex: 1 }} />
-        )}
-        <button style={softBlueButtonStyle} onClick={() => onQuickAddChild(person)}>
-          + Hijo
-        </button>
-      </div>
+          <div style={personMiniButtonsStyle}>
+            {!person.partnerId ? (
+              <button
+                style={{ ...softGreenButtonStyle, ...smallButtonStyle }}
+                onClick={() => onQuickAddPartner(person)}
+              >
+                + Pareja
+              </button>
+            ) : (
+              <div style={{ flex: 1 }} />
+            )}
+            <button
+              style={{ ...softBlueButtonStyle, ...smallButtonStyle }}
+              onClick={() => onQuickAddChild(person)}
+            >
+              + Hijo
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -208,10 +254,11 @@ function FamilyBlock({
   onToggleCollapse,
   onOpenFamily,
   highlightedId,
+  isMobile,
 }) {
   const { person, partner, hiddenChildrenCount, collapsed } = node;
-  const w = partner ? 540 : 290;
-  const h = root ? 460 : 440;
+  const w = isMobile ? (partner ? 320 : 170) : partner ? 540 : 290;
+  const h = isMobile ? (root ? 300 : 280) : root ? 460 : 440;
   const left = x - w / 2;
   const top = y;
   const blockTitle = partner ? "Unidad familiar" : "Persona / núcleo";
@@ -225,30 +272,54 @@ function FamilyBlock({
         style={{
           ...(root ? familyBlockRootStyle : familyBlockStyle),
           ...(isHighlighted ? highlightedBlockStyle : {}),
+          padding: isMobile ? "10px" : "16px",
         }}
       >
-        <div style={familyHeaderRowStyle}>
-          <div style={familyHeaderStyle}>{blockTitle}</div>
+        <div style={{ ...familyHeaderRowStyle, marginBottom: isMobile ? "8px" : "14px" }}>
+          <div style={{ ...familyHeaderStyle, fontSize: isMobile ? "11px" : "15px" }}>{blockTitle}</div>
           {hiddenChildrenCount > 0 ? (
-            <button style={collapseButtonStyle} onClick={() => onToggleCollapse(person.id)}>
+            <button
+              style={{
+                ...collapseButtonStyle,
+                padding: isMobile ? "6px 7px" : "9px 11px",
+                fontSize: isMobile ? "10px" : "12px",
+              }}
+              onClick={() => onToggleCollapse(person.id)}
+            >
               {collapsed ? `Abrir (${hiddenChildrenCount})` : `Ocultar (${hiddenChildrenCount})`}
             </button>
           ) : null}
         </div>
 
-        <div style={partner ? familyPeopleRowStyle : familyPeopleSingleStyle}>
+        <div
+          style={
+            partner
+              ? {
+                  ...familyPeopleRowStyle,
+                  gap: isMobile ? "8px" : "18px",
+                }
+              : familyPeopleSingleStyle
+          }
+        >
           <PersonMini
             person={person}
             onEdit={onEdit}
             onDelete={onDelete}
             onQuickAddPartner={onQuickAddPartner}
             onQuickAddChild={onQuickAddChild}
+            isMobile={isMobile}
           />
 
           {partner ? (
             <>
-              <div style={partnerCenterLinkWrapStyle}>
-                <div style={partnerCenterLinkStyle} />
+              <div style={{ ...partnerCenterLinkWrapStyle, width: isMobile ? "16px" : "26px" }}>
+                <div
+                  style={{
+                    ...partnerCenterLinkStyle,
+                    width: isMobile ? "14px" : "24px",
+                    height: isMobile ? "4px" : "5px",
+                  }}
+                />
               </div>
 
               <PersonMini
@@ -257,29 +328,73 @@ function FamilyBlock({
                 onDelete={onDelete}
                 onQuickAddPartner={onQuickAddPartner}
                 onQuickAddChild={onQuickAddChild}
+                isMobile={isMobile}
               />
             </>
           ) : null}
         </div>
 
-        <div style={familyBottomMetaStyle}>
-          <span style={metaChipStyle}>
+        <div style={{ ...familyBottomMetaStyle, marginTop: isMobile ? "8px" : "14px" }}>
+          <span
+            style={{
+              ...metaChipStyle,
+              padding: isMobile ? "5px 8px" : "7px 12px",
+              fontSize: isMobile ? "10px" : "12px",
+            }}
+          >
             {hiddenChildrenCount} hijo{hiddenChildrenCount === 1 ? "" : "s"}
           </span>
-          {partner ? <span style={metaChipBlueStyle}>Pareja enlazada</span> : null}
+          {partner ? (
+            <span
+              style={{
+                ...metaChipBlueStyle,
+                padding: isMobile ? "5px 8px" : "7px 12px",
+                fontSize: isMobile ? "10px" : "12px",
+              }}
+            >
+              Pareja enlazada
+            </span>
+          ) : null}
         </div>
 
-        <div style={familyBottomActionsStyle}>
-          <button style={familyActionButtonGreen} onClick={() => onQuickAddChild(person)}>
+        <div
+          style={{
+            ...familyBottomActionsStyle,
+            marginTop: isMobile ? "8px" : "14px",
+            gap: isMobile ? "6px" : "10px",
+          }}
+        >
+          <button
+            style={{
+              ...familyActionButtonGreen,
+              padding: isMobile ? "8px 10px" : "13px 18px",
+              fontSize: isMobile ? "10px" : "13px",
+            }}
+            onClick={() => onQuickAddChild(person)}
+          >
             + Agregar hijo
           </button>
 
           {!partner ? (
-            <button style={familyActionButtonBlue} onClick={() => onQuickAddPartner(person)}>
+            <button
+              style={{
+                ...familyActionButtonBlue,
+                padding: isMobile ? "8px 10px" : "13px 18px",
+                fontSize: isMobile ? "10px" : "13px",
+              }}
+              onClick={() => onQuickAddPartner(person)}
+            >
               + Agregar pareja
             </button>
           ) : (
-            <button style={familyActionButtonGray} onClick={() => onOpenFamily(node)}>
+            <button
+              style={{
+                ...familyActionButtonGray,
+                padding: isMobile ? "8px 10px" : "13px 18px",
+                fontSize: isMobile ? "10px" : "13px",
+              }}
+              onClick={() => onOpenFamily(node)}
+            >
               Editar familia
             </button>
           )}
@@ -298,16 +413,20 @@ function PersonEditorPanel({
   onClose,
   onDeleteCurrent,
   onImage,
+  isMobile,
 }) {
   if (!open) return null;
 
   return (
     <div style={overlayStyle}>
-      <div style={sidePanelStyle}>
+      <div
+        style={{
+          ...sidePanelStyle,
+          width: isMobile ? "100%" : "420px",
+        }}
+      >
         <div style={panelHeaderStyle}>
-          <div style={panelTitleStyle}>
-            {form.id ? "Editar familiar" : "Agregar familiar"}
-          </div>
+          <div style={panelTitleStyle}>{form.id ? "Editar familiar" : "Agregar familiar"}</div>
           <button style={panelCloseStyle} onClick={onClose}>
             ✕
           </button>
@@ -330,11 +449,13 @@ function PersonEditorPanel({
             style={inputStyle}
           >
             <option value="">Selecciona pareja</option>
-            {people.filter((p) => p.id !== form.id).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {people
+              .filter((p) => p.id !== form.id)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
           </select>
 
           <label style={labelStyle}>Padre / Madre 1</label>
@@ -344,11 +465,13 @@ function PersonEditorPanel({
             style={inputStyle}
           >
             <option value="">Selecciona una persona</option>
-            {people.filter((p) => p.id !== form.id).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {people
+              .filter((p) => p.id !== form.id)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
           </select>
 
           <label style={labelStyle}>Padre / Madre 2</label>
@@ -358,11 +481,13 @@ function PersonEditorPanel({
             style={inputStyle}
           >
             <option value="">Selecciona una persona</option>
-            {people.filter((p) => p.id !== form.id).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {people
+              .filter((p) => p.id !== form.id)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
           </select>
 
           <label style={labelStyle}>Fecha de nacimiento</label>
@@ -398,7 +523,12 @@ function PersonEditorPanel({
             placeholder="Notas"
           />
 
-          <div style={sideButtonRowStyle}>
+          <div
+            style={{
+              ...sideButtonRowStyle,
+              flexDirection: isMobile ? "column" : "row",
+            }}
+          >
             <button style={primaryButton} onClick={onSave}>
               {form.id ? "Guardar cambios" : "Guardar"}
             </button>
@@ -422,6 +552,7 @@ function FamilyPanel({
   onEditPerson,
   onQuickAddChild,
   onQuickAddPartner,
+  isMobile,
 }) {
   if (!open || !node) return null;
 
@@ -429,7 +560,12 @@ function FamilyPanel({
 
   return (
     <div style={overlayCenterStyle}>
-      <div style={familyPanelStyle}>
+      <div
+        style={{
+          ...familyPanelStyle,
+          width: isMobile ? "96vw" : "760px",
+        }}
+      >
         <div style={panelHeaderStyle}>
           <div style={panelTitleStyle}>Panel familiar</div>
           <button style={panelCloseStyle} onClick={onClose}>
@@ -440,7 +576,13 @@ function FamilyPanel({
         <div style={familyPanelBodyStyle}>
           <div style={familySectionStyle}>
             <div style={familySectionTitleStyle}>Principal</div>
-            <div style={familyItemCardStyle}>
+            <div
+              style={{
+                ...familyItemCardStyle,
+                flexDirection: isMobile ? "column" : "row",
+                alignItems: isMobile ? "flex-start" : "center",
+              }}
+            >
               <div style={familyItemNameStyle}>{node.person.name}</div>
               <button style={secondaryButton} onClick={() => onEditPerson(node.person)}>
                 Editar principal
@@ -451,14 +593,26 @@ function FamilyPanel({
           <div style={familySectionStyle}>
             <div style={familySectionTitleStyle}>Pareja</div>
             {node.partner ? (
-              <div style={familyItemCardStyle}>
+              <div
+                style={{
+                  ...familyItemCardStyle,
+                  flexDirection: isMobile ? "column" : "row",
+                  alignItems: isMobile ? "flex-start" : "center",
+                }}
+              >
                 <div style={familyItemNameStyle}>{node.partner.name}</div>
                 <button style={secondaryButton} onClick={() => onEditPerson(node.partner)}>
                   Editar pareja
                 </button>
               </div>
             ) : (
-              <div style={familyItemCardStyle}>
+              <div
+                style={{
+                  ...familyItemCardStyle,
+                  flexDirection: isMobile ? "column" : "row",
+                  alignItems: isMobile ? "flex-start" : "center",
+                }}
+              >
                 <div style={familyItemNameStyle}>No hay pareja registrada</div>
                 <button style={familyActionButtonBlue} onClick={() => onQuickAddPartner(node.person)}>
                   + Agregar pareja
@@ -472,7 +626,14 @@ function FamilyPanel({
             <div style={childrenListStyle}>
               {children.length ? (
                 children.map((child) => (
-                  <div key={child.id} style={childRowStyle}>
+                  <div
+                    key={child.id}
+                    style={{
+                      ...childRowStyle,
+                      flexDirection: isMobile ? "column" : "row",
+                      alignItems: isMobile ? "flex-start" : "center",
+                    }}
+                  >
                     <div style={childNameStyle}>{child.name}</div>
                     <button style={secondaryButton} onClick={() => onEditPerson(child)}>
                       Editar
@@ -494,6 +655,9 @@ function FamilyPanel({
 }
 
 export default function FamilyTreeApp({ user }) {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false
+  );
   const [trees, setTrees] = useState([]);
   const [currentTreeId, setCurrentTreeId] = useState(null);
   const [treeName, setTreeName] = useState("Mi árbol familiar");
@@ -521,13 +685,27 @@ export default function FamilyTreeApp({ user }) {
   const roots = useMemo(() => getRoots(people), [people]);
 
   const [centerId, setCenterId] = useState("");
-  const [zoom, setZoom] = useState(0.95);
+  const [zoom, setZoom] = useState(isMobile ? 0.65 : 0.95);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   const [searchText, setSearchText] = useState("");
   const [selectedSearchId, setSelectedSearchId] = useState("");
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    setZoom((prev) => {
+      if (isMobile && prev > 0.8) return 0.65;
+      if (!isMobile && prev < 0.7) return 0.95;
+      return prev;
+    });
+  }, [isMobile]);
 
   useEffect(() => {
     async function loadTrees() {
@@ -596,6 +774,31 @@ export default function FamilyTreeApp({ user }) {
     return () => window.removeEventListener("beforeunload", handler);
   }, [hasUnsavedChanges]);
 
+  useEffect(() => {
+    if (!user || !currentTreeId) return;
+    if (!hasUnsavedChanges) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        await saveTree(user.uid, currentTreeId, {
+          name: treeName,
+          people,
+          isPublic,
+          publicSlug,
+        });
+
+        await refreshTrees(user.uid);
+        setCloudStatus("saved");
+        setHasUnsavedChanges(false);
+      } catch (error) {
+        console.error("Error en autosave:", error);
+        setCloudStatus("error");
+      }
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [user, currentTreeId, treeName, people, isPublic, publicSlug, hasUnsavedChanges]);
+
   const filteredPeople = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     if (!q) return people.slice(0, 50);
@@ -614,8 +817,8 @@ export default function FamilyTreeApp({ user }) {
 
   const positions = useMemo(() => {
     if (!layout) return {};
-    return createPositions(layout);
-  }, [layout]);
+    return createPositions(layout, isMobile);
+  }, [layout, isMobile]);
 
   async function refreshTrees(uid) {
     if (!uid) return;
@@ -767,7 +970,7 @@ export default function FamilyTreeApp({ user }) {
       setCloudStatus("shared");
       setHasUnsavedChanges(false);
 
-      const link = `${window.location.origin}?public=${slug}`;
+      const link = `${window.location.origin}/public/${slug}`;
       await navigator.clipboard.writeText(link);
       alert("Link copiado:\n" + link);
     } catch (error) {
@@ -797,7 +1000,7 @@ export default function FamilyTreeApp({ user }) {
     if (!publicSlug) return;
 
     try {
-      const link = `${window.location.origin}?public=${publicSlug}`;
+      const link = `${window.location.origin}/public/${publicSlug}`;
       await navigator.clipboard.writeText(link);
       alert("Link copiado:\n" + link);
     } catch (error) {
@@ -811,9 +1014,9 @@ export default function FamilyTreeApp({ user }) {
     setSelectedSearchId(personId);
     setPan({
       x: -positions[personId].x,
-      y: -positions[personId].y + 140,
+      y: -positions[personId].y + (isMobile ? 90 : 140),
     });
-    setZoom(1.05);
+    setZoom(isMobile ? 0.9 : 1.05);
   };
 
   const savePerson = async () => {
@@ -868,6 +1071,7 @@ export default function FamilyTreeApp({ user }) {
     setPersonPanelOpen(false);
     setForm(emptyPerson());
     setHasUnsavedChanges(true);
+    setCloudStatus("local");
 
     if (user && currentTreeId) {
       await handleSaveTree(nextPeople);
@@ -928,7 +1132,7 @@ export default function FamilyTreeApp({ user }) {
   };
 
   const fitTree = () => {
-    setZoom(0.78);
+    setZoom(isMobile ? 0.65 : 0.78);
     setPan({ x: 0, y: 0 });
   };
 
@@ -952,6 +1156,7 @@ export default function FamilyTreeApp({ user }) {
     }
 
     setHasUnsavedChanges(true);
+    setCloudStatus("local");
 
     if (user && currentTreeId) {
       await handleSaveTree(nextPeople);
@@ -995,8 +1200,8 @@ export default function FamilyTreeApp({ user }) {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = 4600;
-      canvas.height = 3600;
+      canvas.width = isMobile ? 2600 : 4600;
+      canvas.height = isMobile ? 2200 : 3600;
       const ctx = canvas.getContext("2d");
       ctx.fillStyle = "#f8fafc";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1032,6 +1237,7 @@ export default function FamilyTreeApp({ user }) {
         setFamilyPanelOpen(false);
         setForm(emptyPerson());
         setHasUnsavedChanges(true);
+        setCloudStatus("local");
 
         if (user && currentTreeId) {
           await handleSaveTree(parsed);
@@ -1055,6 +1261,7 @@ export default function FamilyTreeApp({ user }) {
     setFamilyPanelOpen(false);
     setForm(emptyPerson());
     setHasUnsavedChanges(true);
+    setCloudStatus("local");
 
     if (user && currentTreeId) {
       await handleSaveTree([]);
@@ -1087,9 +1294,15 @@ export default function FamilyTreeApp({ user }) {
 
   return (
     <div style={pageStyle}>
-      <div style={containerStyle}>
-        <h1 style={titleStyle}>Árbol Genealógico</h1>
-        <p style={subtitleStyle}>
+      <div
+        style={{
+          ...containerStyle,
+          padding: isMobile ? "14px" : "22px",
+          borderRadius: isMobile ? "16px" : "24px",
+        }}
+      >
+        <h1 style={{ ...titleStyle, fontSize: isMobile ? "28px" : "46px" }}>Árbol Genealógico</h1>
+        <p style={{ ...subtitleStyle, fontSize: isMobile ? "14px" : "18px" }}>
           Versión completa con panel familiar, búsqueda, múltiples árboles y nube.
         </p>
 
@@ -1102,16 +1315,20 @@ export default function FamilyTreeApp({ user }) {
                 onChange={(e) => {
                   setTreeName(e.target.value);
                   setHasUnsavedChanges(true);
+                  setCloudStatus("local");
                 }}
                 placeholder="Nombre del árbol"
                 style={treeNameInputStyle}
               />
             </div>
 
-            <div style={cloudPanelRightStyle}>
-              <div style={cloudStatusStyle}>
-                Estado: {cloudStatusText(cloudStatus)}
-              </div>
+            <div
+              style={{
+                ...cloudPanelRightStyle,
+                width: isMobile ? "100%" : "auto",
+              }}
+            >
+              <div style={cloudStatusStyle}>Estado: {cloudStatusText(cloudStatus)}</div>
 
               <button onClick={handleSaveTree} style={secondaryButton} disabled={!user || !currentTreeId}>
                 Guardar nube
@@ -1153,19 +1370,15 @@ export default function FamilyTreeApp({ user }) {
                     style={{
                       ...treeListItemStyle,
                       ...(currentTreeId === treeItem.id ? treeListItemActiveStyle : {}),
+                      flexDirection: isMobile ? "column" : "row",
+                      alignItems: isMobile ? "stretch" : "center",
                     }}
                   >
-                    <button
-                      onClick={() => handleOpenTree(treeItem.id)}
-                      style={treeOpenButtonStyle}
-                    >
+                    <button onClick={() => handleOpenTree(treeItem.id)} style={treeOpenButtonStyle}>
                       {treeItem.name || "Sin nombre"}
                     </button>
 
-                    <button
-                      onClick={() => handleDeleteTree(treeItem.id)}
-                      style={treeDeleteButtonStyle}
-                    >
+                    <button onClick={() => handleDeleteTree(treeItem.id)} style={treeDeleteButtonStyle}>
                       Eliminar
                     </button>
                   </div>
@@ -1175,13 +1388,18 @@ export default function FamilyTreeApp({ user }) {
 
             {isPublic && publicSlug ? (
               <div style={treeListEmptyStyle}>
-                Link público: {`${window.location.origin}?public=${publicSlug}`}
+                Link público: {`${window.location.origin}/public/${publicSlug}`}
               </div>
             ) : null}
           </div>
         </div>
 
-        <div style={topBarStyle}>
+        <div
+          style={{
+            ...topBarStyle,
+            gridTemplateColumns: isMobile ? "1fr" : topBarStyle.gridTemplateColumns,
+          }}
+        >
           <div style={selectorBlockStyle}>
             <div style={selectorTitleStyle}>Patriarca / raíz principal</div>
             <select
@@ -1229,7 +1447,12 @@ export default function FamilyTreeApp({ user }) {
             </div>
           </div>
 
-          <div style={zoomBlockStyle}>
+          <div
+            style={{
+              ...zoomBlockStyle,
+              justifyContent: isMobile ? "flex-start" : "center",
+            }}
+          >
             <button onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.05).toFixed(2)))} style={secondaryButton}>
               -
             </button>
@@ -1239,7 +1462,7 @@ export default function FamilyTreeApp({ user }) {
             </button>
             <button
               onClick={() => {
-                setZoom(0.95);
+                setZoom(isMobile ? 0.65 : 0.95);
                 setPan({ x: 0, y: 0 });
               }}
               style={secondaryButton}
@@ -1280,7 +1503,10 @@ export default function FamilyTreeApp({ user }) {
           <div style={emptyStyle}>Asigna al menos un patriarca sin padres para iniciar el flujo.</div>
         ) : (
           <div
-            style={treeViewportStyle}
+            style={{
+              ...treeViewportStyle,
+              height: isMobile ? "68vh" : "78vh",
+            }}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseUp}
@@ -1288,18 +1514,31 @@ export default function FamilyTreeApp({ user }) {
             <div
               style={{
                 ...treeCanvasWrapStyle,
+                minWidth: isMobile ? "2200px" : "4600px",
+                minHeight: isMobile ? "2200px" : "3600px",
                 cursor: dragging ? "grabbing" : "grab",
               }}
               onMouseDown={onMouseDown}
             >
-              <svg id="family-tree-svg" width="4600" height="3600" style={svgStyle}>
-                <g transform={`translate(2300 150) translate(${pan.x} ${pan.y}) scale(${zoom})`}>
+              <svg
+                id="family-tree-svg"
+                width={isMobile ? "2200" : "4600"}
+                height={isMobile ? "2200" : "3600"}
+                style={{
+                  ...svgStyle,
+                  width: isMobile ? "2200px" : "4600px",
+                  height: isMobile ? "2200px" : "3600px",
+                }}
+              >
+                <g
+                  transform={`translate(${isMobile ? 1100 : 2300} ${isMobile ? 100 : 150}) translate(${pan.x} ${pan.y}) scale(${zoom})`}
+                >
                   {layout.edges.map((edge, idx) => {
                     const parentPos = positions[edge.from];
                     const childPos = positions[edge.to];
                     if (!parentPos || !childPos) return null;
 
-                    const parentBottom = parentPos.y + 500;
+                    const parentBottom = parentPos.y + (isMobile ? 220 : 500);
                     const childTop = childPos.y;
 
                     return (
@@ -1308,7 +1547,7 @@ export default function FamilyTreeApp({ user }) {
                         d={curvePath(parentPos.x, parentBottom, childPos.x, childTop)}
                         fill="none"
                         stroke="#94a3b8"
-                        strokeWidth="5"
+                        strokeWidth={isMobile ? "3" : "5"}
                         strokeLinecap="round"
                       />
                     );
@@ -1332,6 +1571,7 @@ export default function FamilyTreeApp({ user }) {
                         onToggleCollapse={toggleCollapse}
                         onOpenFamily={openFamilyEditor}
                         highlightedId={selectedSearchId}
+                        isMobile={isMobile}
                       />
                     );
                   })}
@@ -1351,6 +1591,7 @@ export default function FamilyTreeApp({ user }) {
         onClose={() => setPersonPanelOpen(false)}
         onDeleteCurrent={() => deletePerson(form.id)}
         onImage={handleImage}
+        isMobile={isMobile}
       />
 
       <FamilyPanel
@@ -1364,6 +1605,7 @@ export default function FamilyTreeApp({ user }) {
         }}
         onQuickAddChild={quickAddChild}
         onQuickAddPartner={quickAddPartner}
+        isMobile={isMobile}
       />
     </div>
   );

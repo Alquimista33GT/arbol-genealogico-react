@@ -1,80 +1,177 @@
-import { useEffect, useMemo, useState } from "react";
-import { getPublicTreeBySlug } from "./services/treeService";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getPublicTree } from "./services/treeService";
 
-function getRoots(people) {
-  return people.filter((p) => !p.parent1 && !p.parent2);
+function getPersonById(people, id) {
+  return people.find((p) => p.id === id) || null;
 }
 
-function getChildrenOfPerson(people, personId) {
-  return people.filter((p) => p.parent1 === personId || p.parent2 === personId);
+function getRoots(people) {
+  return people.filter((p) => {
+    const hasNoParents = !p.parent1 && !p.parent2;
+
+    if (!hasNoParents) return false;
+
+    // Evita duplicar parejas en la raíz
+    if (p.partnerId && p.id > p.partnerId) return false;
+
+    return true;
+  });
+}
+
+function getChildrenOfPair(people, aId, bId = "") {
+  const ids = new Set();
+  for (const p of people) {
+    const hasA = aId && (p.parent1 === aId || p.parent2 === aId);
+    const hasB = bId && (p.parent1 === bId || p.parent2 === bId);
+    if (hasA || hasB) ids.add(p.id);
+  }
+  return [...ids].map((id) => getPersonById(people, id)).filter(Boolean);
+}
+
+function buildTree(people, personId, visited = new Set()) {
+  const person = getPersonById(people, personId);
+  if (!person || visited.has(personId)) return null;
+
+  const nextVisited = new Set(visited);
+  nextVisited.add(personId);
+
+  const partner = person.partnerId ? getPersonById(people, person.partnerId) : null;
+  if (partner) nextVisited.add(partner.id);
+
+  const children = getChildrenOfPair(people, person.id, partner?.id || "")
+    .filter((child) => !nextVisited.has(child.id))
+    .map((child) => buildTree(people, child.id, nextVisited))
+    .filter(Boolean);
+
+  return {
+    id: person.id,
+    person,
+    partner,
+    children,
+  };
+}
+
+function measureTree(node, level = 0, layout = { levels: [], nodes: [], edges: [] }) {
+  if (!node) return layout;
+
+  if (!layout.levels[level]) layout.levels[level] = [];
+  layout.levels[level].push(node);
+  layout.nodes.push(node);
+
+  node.children.forEach((child) => {
+    layout.edges.push({ from: node.id, to: child.id });
+    measureTree(child, level + 1, layout);
+  });
+
+  return layout;
+}
+
+function createPositions(layout) {
+  const positions = {};
+  const gapX = 380;
+  const gapY = 360;
+
+  layout.levels.forEach((nodes, levelIndex) => {
+    const count = nodes.length;
+    const totalWidth = Math.max(count * gapX, gapX);
+    const startX = -totalWidth / 2 + gapX / 2;
+
+    nodes.forEach((node, i) => {
+      positions[node.id] = {
+        x: startX + i * gapX,
+        y: levelIndex * gapY,
+      };
+    });
+  });
+
+  return positions;
+}
+
+function curvePath(x1, y1, x2, y2) {
+  const midY = y1 + (y2 - y1) * 0.45;
+  return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
 }
 
 function PublicPersonCard({ person }) {
   return (
-    <div style={cardStyle}>
-      <div style={cardTopStyle}>
-        <div style={photoWrapStyle}>
-          {person.photo ? (
-            <img src={person.photo} alt={person.name} style={photoStyle} />
-          ) : (
-            <div style={photoPlaceholderStyle}>Sin foto</div>
-          )}
-        </div>
-
-        <div style={{ flex: 1 }}>
-          <div style={nameStyle}>{person.name || "Sin nombre"}</div>
-          <div style={metaStyle}>
-            {person.birthDate ? `Nac: ${person.birthDate}` : "Sin fecha"}
-            {person.birthPlace ? ` · ${person.birthPlace}` : ""}
-          </div>
-        </div>
+    <div xmlns="http://www.w3.org/1999/xhtml" style={publicPersonStyle}>
+      <div style={publicImageWrapStyle}>
+        {person.photo ? (
+          <img src={person.photo} alt={person.name} style={publicImageStyle} />
+        ) : (
+          <div style={publicImagePlaceholderStyle}>Sin foto</div>
+        )}
       </div>
 
-      {person.notes ? <div style={notesStyle}>{person.notes}</div> : null}
+      <div style={publicNameStyle}>{person.name || "Sin nombre"}</div>
+
+      <div style={publicInfoStyle}>
+        {person.birthDate ? <div>Nac: {person.birthDate}</div> : null}
+        {person.birthPlace ? <div>Lugar: {person.birthPlace}</div> : null}
+        {!person.birthDate && !person.birthPlace ? (
+          <div style={{ color: "#94a3b8" }}>Sin datos</div>
+        ) : null}
+      </div>
+
+      {person.notes ? <div style={publicNotesStyle}>{person.notes}</div> : null}
     </div>
   );
 }
 
-function PublicTreeNode({ person, people, level = 0, visited = new Set() }) {
-  if (!person || visited.has(person.id)) return null;
+function PublicFamilyBlock({ node, x, y, root, highlightedId }) {
+  const { person, partner } = node;
+  const w = partner ? 360 : 180;
+  const h = root ? 290 : 270;
+  const left = x - w / 2;
 
-  const nextVisited = new Set(visited);
-  nextVisited.add(person.id);
-
-  const children = getChildrenOfPerson(people, person.id).filter(
-    (child) => !nextVisited.has(child.id)
-  );
+  const isHighlighted =
+    highlightedId && (highlightedId === person.id || highlightedId === partner?.id);
 
   return (
-    <div style={{ marginLeft: level * 26, marginTop: 14 }}>
-      <PublicPersonCard person={person} />
-
-      {children.length > 0 ? (
-        <div style={childrenWrapStyle}>
-          {children.map((child) => (
-            <PublicTreeNode
-              key={child.id}
-              person={child}
-              people={people}
-              level={level + 1}
-              visited={nextVisited}
-            />
-          ))}
+    <foreignObject x={left} y={y} width={w} height={h}>
+      <div
+        xmlns="http://www.w3.org/1999/xhtml"
+        style={{
+          ...(root ? publicFamilyRootStyle : publicFamilyStyle),
+          ...(isHighlighted ? publicHighlightedStyle : {}),
+        }}
+      >
+        <div style={publicHeaderStyle}>
+          {partner ? "Unidad familiar" : "Persona"}
         </div>
-      ) : null}
-    </div>
+
+        <div style={partner ? publicFamilyRowStyle : publicFamilySingleStyle}>
+          <PublicPersonCard person={person} />
+
+          {partner ? (
+            <>
+              <div style={publicLinkWrapStyle}>
+                <div style={publicLinkStyle} />
+              </div>
+              <PublicPersonCard person={partner} />
+            </>
+          ) : null}
+        </div>
+      </div>
+    </foreignObject>
   );
 }
 
 export default function PublicTreePage({ slug }) {
-  const [tree, setTree] = useState(null);
+  const [treeData, setTreeData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [searchText, setSearchText] = useState("");
+  const [selectedSearchId, setSelectedSearchId] = useState("");
+  const [zoom, setZoom] = useState(0.85);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   useEffect(() => {
     async function loadPublicTree() {
       try {
-        const data = await getPublicTreeBySlug(slug);
-        setTree(data);
+        const data = await getPublicTree(slug);
+        setTreeData(data);
       } catch (error) {
         console.error("Error cargando árbol público:", error);
       } finally {
@@ -85,42 +182,235 @@ export default function PublicTreePage({ slug }) {
     loadPublicTree();
   }, [slug]);
 
-  const roots = useMemo(() => {
-    return Array.isArray(tree?.people) ? getRoots(tree.people) : [];
-  }, [tree]);
+  const people = Array.isArray(treeData?.people) ? treeData.people : [];
+  const roots = useMemo(() => getRoots(people), [people]);
+
+  const forest = useMemo(() => {
+    return roots
+      .map((root) => buildTree(people, root.id))
+      .filter(Boolean);
+  }, [people, roots]);
+
+  const layout = useMemo(() => {
+    const merged = { levels: [], nodes: [], edges: [] };
+
+    forest.forEach((tree) => {
+      const partial = measureTree(tree);
+      partial.levels.forEach((levelNodes, idx) => {
+        if (!merged.levels[idx]) merged.levels[idx] = [];
+        merged.levels[idx].push(...levelNodes);
+      });
+      merged.nodes.push(...partial.nodes);
+      merged.edges.push(...partial.edges);
+    });
+
+    return merged;
+  }, [forest]);
+
+  const positions = useMemo(() => createPositions(layout), [layout]);
+
+  useEffect(() => {
+    if (!layout || !layout.nodes.length) return;
+
+    const first = layout.nodes[0];
+    const pos = positions[first.id];
+
+    if (pos) {
+      setPan({
+        x: -pos.x,
+        y: -pos.y + 120,
+      });
+    }
+  }, [layout, positions]);
+
+  const filteredPeople = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    if (!q) return people.slice(0, 50);
+    return people.filter((p) => (p.name || "").toLowerCase().includes(q)).slice(0, 50);
+  }, [people, searchText]);
+
+  function focusPerson(personId) {
+    if (!personId || !positions[personId]) return;
+
+    setSelectedSearchId(personId);
+    setPan({
+      x: -positions[personId].x,
+      y: -positions[personId].y + 120,
+    });
+    setZoom(1.05);
+  }
+
+  function onMouseDown(e) {
+    setDragging(true);
+    dragRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+  }
+
+  function onMouseMove(e) {
+    if (!dragging) return;
+    const dx = e.clientX - dragRef.current.x;
+    const dy = e.clientY - dragRef.current.y;
+    setPan({
+      x: dragRef.current.panX + dx,
+      y: dragRef.current.panY + dy,
+    });
+  }
+
+  function onMouseUp() {
+    setDragging(false);
+  }
+
+  async function handleCopyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      alert("Link copiado al portapapeles");
+    } catch {
+      alert(window.location.href);
+    }
+  }
 
   if (loading) {
     return (
       <div style={pageStyle}>
-        <div style={wrapStyle}>Cargando árbol público...</div>
+        <div style={publicWrapStyle}>Cargando árbol público...</div>
       </div>
     );
   }
 
-  if (!tree) {
+  if (!treeData) {
     return (
       <div style={pageStyle}>
-        <div style={wrapStyle}>Este link no existe o ya no está disponible.</div>
+        <div style={publicWrapStyle}>
+          <div style={notFoundCardStyle}>
+            <h1 style={{ marginTop: 0 }}>Link no disponible</h1>
+            <p style={{ color: "#64748b" }}>
+              Este árbol no existe o ya dejó de estar compartido.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div style={pageStyle}>
-      <div style={wrapStyle}>
-        <div style={heroStyle}>
+      <div style={publicWrapStyle}>
+        <div style={publicHeroStyle}>
           <div>
-            <h1 style={titleStyle}>{tree.name || "Árbol familiar"}</h1>
-            <p style={subtitleStyle}>Vista pública · solo lectura</p>
+            <h1 style={publicTitleStyle}>{treeData.name || "Árbol familiar"}</h1>
+            <p style={publicSubtitleStyle}>Árbol compartido · solo lectura</p>
+          </div>
+
+          <div style={publicHeroActionsStyle}>
+            <input
+              type="text"
+              placeholder="Buscar familiar"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={publicSearchInputStyle}
+            />
+            <select
+              value={selectedSearchId}
+              onChange={(e) => {
+                setSelectedSearchId(e.target.value);
+                focusPerson(e.target.value);
+              }}
+              style={publicSearchSelectStyle}
+            >
+              <option value="">Selecciona resultado</option>
+              {filteredPeople.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button style={publicButtonStyle} onClick={handleCopyLink}>
+              Copiar link
+            </button>
           </div>
         </div>
 
-        {roots.length === 0 ? (
-          <div style={emptyStyle}>No hay personas publicadas en este árbol.</div>
+        <div style={publicToolbarStyle}>
+          <button style={publicButtonStyle} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.05).toFixed(2)))}>
+            -
+          </button>
+          <div style={publicZoomLabelStyle}>Zoom {Math.round(zoom * 100)}%</div>
+          <button style={publicButtonStyle} onClick={() => setZoom((z) => Math.min(1.8, +(z + 0.05).toFixed(2)))}>
+            +
+          </button>
+          <button
+            style={publicButtonStyle}
+            onClick={() => {
+              setZoom(0.85);
+              setPan({ x: 0, y: 0 });
+              setSelectedSearchId("");
+            }}
+          >
+            Centrar
+          </button>
+        </div>
+
+        {people.length === 0 ? (
+          <div style={emptyStyle}>No hay familiares públicos en este árbol.</div>
         ) : (
-          roots.map((root) => (
-            <PublicTreeNode key={root.id} person={root} people={tree.people} />
-          ))
+          <div
+            style={treeViewportStyle}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+          >
+            <div
+              style={{
+                ...treeCanvasWrapStyle,
+                cursor: dragging ? "grabbing" : "grab",
+              }}
+              onMouseDown={onMouseDown}
+            >
+              <svg id="public-family-tree-svg" width="3400" height="2600" style={svgStyle}>
+                <g transform={`translate(1700 120) translate(${pan.x} ${pan.y}) scale(${zoom})`}>
+                  {layout.edges.map((edge, idx) => {
+                    const parentPos = positions[edge.from];
+                    const childPos = positions[edge.to];
+                    if (!parentPos || !childPos) return null;
+
+                    const parentBottom = parentPos.y + 300;
+                    const childTop = childPos.y;
+
+                    return (
+                      <path
+                        key={idx}
+                        d={curvePath(parentPos.x, parentBottom, childPos.x, childTop)}
+                        fill="none"
+                        stroke="#94a3b8"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                      />
+                    );
+                  })}
+
+                  {layout.nodes.map((node) => {
+                    const pos = positions[node.id];
+                    if (!pos) return null;
+
+                    return (
+                      <PublicFamilyBlock
+                        key={node.id}
+                        node={node}
+                        x={pos.x}
+                        y={pos.y}
+                        root={pos.y === 0}
+                        highlightedId={selectedSearchId}
+                      />
+                    );
+                  })}
+                </g>
+              </svg>
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -134,101 +424,250 @@ const pageStyle = {
   fontFamily: "Arial, sans-serif",
 };
 
-const wrapStyle = {
-  maxWidth: "1100px",
+const publicWrapStyle = {
+  maxWidth: "1820px",
   margin: "0 auto",
+};
+
+const publicHeroStyle = {
+  background: "#ffffff",
+  borderRadius: "24px",
+  padding: "22px",
+  boxShadow: "0 12px 35px rgba(0,0,0,0.08)",
+  marginBottom: "14px",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "16px",
+  flexWrap: "wrap",
+};
+
+const publicTitleStyle = {
+  margin: 0,
+  color: "#1f2937",
+  fontSize: "40px",
+};
+
+const publicSubtitleStyle = {
+  marginTop: "8px",
+  marginBottom: 0,
+  color: "#64748b",
+  fontSize: "16px",
+};
+
+const publicHeroActionsStyle = {
+  display: "flex",
+  gap: "10px",
+  flexWrap: "wrap",
+  alignItems: "center",
+};
+
+const publicSearchInputStyle = {
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1.5px solid #cbd5e1",
+  fontSize: "14px",
+  minWidth: "220px",
+};
+
+const publicSearchSelectStyle = {
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1.5px solid #cbd5e1",
+  fontSize: "14px",
+  minWidth: "220px",
+};
+
+const publicToolbarStyle = {
+  display: "flex",
+  gap: "10px",
+  flexWrap: "wrap",
+  alignItems: "center",
+  marginBottom: "14px",
+};
+
+const publicButtonStyle = {
+  padding: "11px 15px",
+  borderRadius: "12px",
+  border: "1px solid #cfd8e3",
+  background: "#fff",
+  color: "#111827",
+  cursor: "pointer",
+  fontWeight: "700",
+  fontSize: "13px",
+};
+
+const publicZoomLabelStyle = {
+  minWidth: "95px",
+  textAlign: "center",
+  fontWeight: "700",
+  color: "#0f172a",
+  fontSize: "14px",
+};
+
+const notFoundCardStyle = {
   background: "#fff",
   borderRadius: "24px",
   padding: "24px",
   boxShadow: "0 12px 35px rgba(0,0,0,0.08)",
 };
 
-const heroStyle = {
-  marginBottom: "22px",
-  padding: "18px 20px",
-  borderRadius: "20px",
-  background: "linear-gradient(135deg, #16a34a 0%, #22c55e 100%)",
-  color: "#fff",
+const publicFamilyStyle = {
+  width: "100%",
+  height: "100%",
+  background: "#ffffff",
+  border: "2px solid #dbe3ec",
+  borderRadius: "24px",
+  boxSizing: "border-box",
+  padding: "16px",
+  boxShadow: "0 10px 24px rgba(0,0,0,0.05)",
 };
 
-const titleStyle = {
-  margin: 0,
-  fontSize: "40px",
+const publicFamilyRootStyle = {
+  width: "100%",
+  height: "100%",
+  background: "#f0fdf4",
+  border: "2px solid #86efac",
+  borderRadius: "24px",
+  boxSizing: "border-box",
+  padding: "16px",
+  boxShadow: "0 10px 24px rgba(0,0,0,0.05)",
 };
 
-const subtitleStyle = {
-  margin: "8px 0 0 0",
-  opacity: 0.95,
-  fontSize: "16px",
+const publicHighlightedStyle = {
+  boxShadow: "0 0 0 4px #facc15, 0 10px 28px rgba(0,0,0,0.10)",
+  borderColor: "#facc15",
 };
 
-const emptyStyle = {
-  padding: "24px",
-  borderRadius: "16px",
-  border: "1px dashed #cbd5e1",
-  color: "#64748b",
+const publicHeaderStyle = {
+  fontSize: "14px",
+  fontWeight: "800",
+  color: "#334155",
+  marginBottom: "14px",
+  textAlign: "center",
 };
 
-const cardStyle = {
-  background: "#f8fafc",
-  border: "1px solid #dbe3ec",
-  borderRadius: "18px",
-  padding: "14px",
-};
-
-const cardTopStyle = {
+const publicFamilyRowStyle = {
   display: "flex",
-  gap: "14px",
+  gap: "12px",
+  alignItems: "stretch",
+  justifyContent: "center",
+};
+
+const publicFamilySingleStyle = {
+  display: "flex",
+  justifyContent: "center",
+};
+
+const publicLinkWrapStyle = {
+  width: "20px",
+  display: "flex",
   alignItems: "center",
+  justifyContent: "center",
 };
 
-const photoWrapStyle = {
-  width: "72px",
+const publicLinkStyle = {
+  width: "18px",
+  height: "4px",
+  borderRadius: "999px",
+  background: "#22c55e",
+};
+
+const publicPersonStyle = {
+  width: "150px",
+  minHeight: "200px",
+  background: "#fff",
+  border: "1px solid #e5e7eb",
+  borderRadius: "18px",
+  padding: "10px",
+  boxSizing: "border-box",
+};
+
+const publicImageWrapStyle = {
+  width: "100%",
   height: "72px",
-  borderRadius: "14px",
+  borderRadius: "12px",
   overflow: "hidden",
-  background: "#e5e7eb",
-  flexShrink: 0,
+  background: "#f3f4f6",
+  marginBottom: "10px",
 };
 
-const photoStyle = {
+const publicImageStyle = {
   width: "100%",
   height: "100%",
   objectFit: "cover",
 };
 
-const photoPlaceholderStyle = {
+const publicImagePlaceholderStyle = {
   width: "100%",
   height: "100%",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  color: "#94a3b8",
-  fontWeight: "700",
-  fontSize: "12px",
+  color: "#9ca3af",
+  fontWeight: "600",
+  fontSize: "11px",
 };
 
-const nameStyle = {
-  fontSize: "20px",
+const publicNameStyle = {
+  fontSize: "13px",
   fontWeight: "800",
   color: "#111827",
+  textAlign: "center",
+  lineHeight: 1.15,
+  minHeight: "32px",
+  marginBottom: "8px",
 };
 
-const metaStyle = {
-  marginTop: "6px",
-  color: "#475569",
-  fontSize: "14px",
-};
-
-const notesStyle = {
-  marginTop: "10px",
+const publicInfoStyle = {
+  minHeight: "46px",
+  borderRadius: "10px",
+  background: "#f8fafc",
+  padding: "8px",
+  fontSize: "10px",
+  lineHeight: 1.35,
   color: "#334155",
-  fontSize: "14px",
-  lineHeight: 1.45,
+  textAlign: "center",
+  marginBottom: "8px",
 };
 
-const childrenWrapStyle = {
-  marginTop: "8px",
-  paddingLeft: "10px",
-  borderLeft: "3px solid #cbd5e1",
+const publicNotesStyle = {
+  fontSize: "10px",
+  lineHeight: 1.35,
+  color: "#475569",
+  background: "#f8fafc",
+  borderRadius: "10px",
+  padding: "8px",
+};
+
+const emptyStyle = {
+  padding: "26px",
+  border: "2px dashed #cbd5e1",
+  borderRadius: "16px",
+  textAlign: "center",
+  color: "#64748b",
+  marginTop: "20px",
+  fontSize: "18px",
+  background: "#fff",
+};
+
+const treeViewportStyle = {
+  marginTop: "14px",
+  borderRadius: "18px",
+  background: "linear-gradient(180deg, #fafafa 0%, #f8fafc 100%)",
+  border: "1px solid #e5e7eb",
+  overflow: "auto",
+  height: "78vh",
+};
+
+const treeCanvasWrapStyle = {
+  minWidth: "3400px",
+  minHeight: "2600px",
+};
+
+const svgStyle = {
+  display: "block",
+  width: "3400px",
+  height: "2600px",
+  userSelect: "none",
 };
