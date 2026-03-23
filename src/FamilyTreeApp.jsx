@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createTree,
   getUserTrees,
   getTree,
   saveTree,
   removeTree,
-  makeTreePublic,
-  makeTreePrivate,
 } from "./services/treeService";
+import "./FamilyTreeApp.css";
+import { exportTreeAsImage, exportTreeAsPdf } from "./treeExport";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -17,7 +15,7 @@ function uid() {
 
 function emptyPerson() {
   return {
-    id: null,
+    id: "",
     name: "",
     photo: "",
     partnerId: "",
@@ -25,800 +23,443 @@ function emptyPerson() {
     parent2: "",
     birthDate: "",
     birthPlace: "",
+    deathDate: "",
     notes: "",
   };
+}
+
+function formatDate(value) {
+  if (!value) return "Sin fecha registrada";
+  return value;
 }
 
 function getPersonById(people, id) {
   return people.find((p) => p.id === id) || null;
 }
 
-function getRoots(people) {
-  return people.filter((p) => !p.parent1 && !p.parent2);
+function normalizePersonData(person) {
+  return {
+    ...person,
+    name: (person?.name || "Sin nombre").trim() || "Sin nombre",
+  };
 }
 
-function getChildrenOfPair(people, aId, bId = "") {
-  const ids = new Set();
-  for (const p of people) {
-    const hasA = aId && (p.parent1 === aId || p.parent2 === aId);
-    const hasB = bId && (p.parent1 === bId || p.parent2 === bId);
-    if (hasA || hasB) ids.add(p.id);
+function getChildrenOfFamily(people, memberIds) {
+  return people.filter((p) => {
+    const parents = [p.parent1, p.parent2].filter(Boolean);
+    return parents.some((parentId) => memberIds.includes(parentId));
+  });
+}
+
+function getPatriarch(people) {
+  if (!people.length) return null;
+
+  const roots = people.filter((p) => !p.parent1 && !p.parent2);
+  if (roots.length) {
+    const partnered = roots.find((p) => p.partnerId);
+    return partnered || roots[0];
   }
-  return [...ids].map((id) => getPersonById(people, id)).filter(Boolean);
+
+  return people[0];
 }
 
-function buildTree(people, personId, collapsedSet, visited = new Set()) {
+function buildSingleFlowUnit(people, personId, visited = new Set()) {
   const person = getPersonById(people, personId);
-  if (!person || visited.has(personId)) return null;
+  if (!person || visited.has(person.id)) return null;
 
   const nextVisited = new Set(visited);
-  nextVisited.add(personId);
+  nextVisited.add(person.id);
 
   const partner = person.partnerId ? getPersonById(people, person.partnerId) : null;
   if (partner) nextVisited.add(partner.id);
 
-  const allChildren = getChildrenOfPair(people, person.id, partner?.id || "");
-  const isCollapsed = collapsedSet.has(person.id);
+  const memberIds = [person.id, partner?.id].filter(Boolean);
+  const allChildren = getChildrenOfFamily(people, memberIds);
 
-  const children = isCollapsed
-    ? []
-    : allChildren
-        .filter((child) => !nextVisited.has(child.id))
-        .map((child) => buildTree(people, child.id, collapsedSet, nextVisited))
-        .filter(Boolean);
+  const childUnits = allChildren
+    .filter((child) => !nextVisited.has(child.id))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+    .map((child) => buildSingleFlowUnit(people, child.id, new Set(nextVisited)))
+    .filter(Boolean);
 
   return {
-    id: person.id,
-    person,
-    partner,
-    children,
-    hiddenChildrenCount: allChildren.length,
-    collapsed: isCollapsed,
+    key: `${person.id}__${partner?.id || "solo"}`,
+    person: normalizePersonData(person),
+    partner: partner ? normalizePersonData(partner) : null,
+    children: childUnits,
   };
 }
 
-function measureTree(node, level = 0, layout = { levels: [], nodes: [], edges: [] }) {
-  if (!node) return layout;
+function measureUnit(unit, isMobile) {
+  const cardW = isMobile ? 220 : 250;
+  const cardH = isMobile ? 92 : 102;
+  const pairGap = isMobile ? 16 : 20;
+  const siblingGap = isMobile ? 22 : 34;
+  const levelGap = isMobile ? 170 : 210;
+  const selfWidth = unit.partner ? cardW * 2 + pairGap : cardW;
 
-  if (!layout.levels[level]) layout.levels[level] = [];
-  layout.levels[level].push(node);
-  layout.nodes.push(node);
+  const measuredChildren = unit.children.map((child) => measureUnit(child, isMobile));
+  const childrenWidth = measuredChildren.reduce((acc, child, idx) => acc + child.subtreeWidth + (idx > 0 ? siblingGap : 0), 0);
 
-  node.children.forEach((child) => {
-    layout.edges.push({ from: node.id, to: child.id });
-    measureTree(child, level + 1, layout);
-  });
-
-  return layout;
+  return {
+    ...unit,
+    children: measuredChildren,
+    cardW,
+    cardH,
+    pairGap,
+    siblingGap,
+    levelGap,
+    selfWidth,
+    subtreeWidth: Math.max(selfWidth, childrenWidth),
+  };
 }
 
-function createPositions(layout, isMobile = false) {
-  const positions = {};
-  const gapX = isMobile ? 260 : 580;
-  const gapY = isMobile ? 320 : 540;
+function placeUnit(unit, originX, level, isMobile, cards, edges) {
+  const centerX = originX + unit.subtreeWidth / 2;
+  const topY = level * unit.levelGap;
+  const familyStartX = centerX - unit.selfWidth / 2;
 
-  layout.levels.forEach((nodes, levelIndex) => {
-    const count = nodes.length;
-    const totalWidth = Math.max(count * gapX, gapX);
-    const startX = -totalWidth / 2 + gapX / 2;
+  const personX = familyStartX;
+  const partnerX = unit.partner ? personX + unit.cardW + unit.pairGap : null;
+  const joinX = unit.partner ? (personX + unit.cardW / 2 + partnerX + unit.cardW / 2) / 2 : personX + unit.cardW / 2;
 
-    nodes.forEach((node, i) => {
-      positions[node.id] = {
-        x: startX + i * gapX,
-        y: levelIndex * gapY,
-      };
+  cards[unit.person.id] = {
+    x: personX,
+    y: topY,
+    width: unit.cardW,
+    height: unit.cardH,
+    centerX: personX + unit.cardW / 2,
+    centerY: topY + unit.cardH / 2,
+    role: "person",
+    isPatriarch: level === 0,
+  };
+
+  if (unit.partner) {
+    cards[unit.partner.id] = {
+      x: partnerX,
+      y: topY,
+      width: unit.cardW,
+      height: unit.cardH,
+      centerX: partnerX + unit.cardW / 2,
+      centerY: topY + unit.cardH / 2,
+      role: "partner",
+      isPatriarch: false,
+    };
+
+    edges.push({
+      type: "couple",
+      fromX: personX + unit.cardW,
+      fromY: topY + unit.cardH / 2,
+      toX: partnerX,
+      toY: topY + unit.cardH / 2,
+    });
+  }
+
+  unit.anchorX = joinX;
+
+  if (!unit.children.length) return;
+
+  let childCursor = originX + (unit.subtreeWidth - unit.children.reduce((acc, child, idx) => acc + child.subtreeWidth + (idx > 0 ? unit.siblingGap : 0), 0)) / 2;
+  const childAnchors = [];
+
+  unit.children.forEach((child) => {
+    placeUnit(child, childCursor, level + 1, isMobile, cards, edges);
+    childAnchors.push(child.anchorX);
+    childCursor += child.subtreeWidth + unit.siblingGap;
+  });
+
+  const trunkTopY = topY + unit.cardH;
+  const trunkStartY = trunkTopY + (isMobile ? 6 : 10);
+  const childTopY = (level + 1) * unit.levelGap;
+
+  childAnchors.forEach((childX) => {
+    edges.push({
+      type: "branch",
+      fromX: joinX,
+      fromY: trunkStartY,
+      toX: childX,
+      toY: childTopY,
     });
   });
-
-  return positions;
 }
 
-function curvePath(x1, y1, x2, y2) {
-  const midY = y1 + (y2 - y1) * 0.42;
-  return `M ${x1} ${y1}
-          C ${x1} ${midY},
-            ${x2} ${midY},
-            ${x2} ${y2}`;
-}
-
-function personSummary(person) {
-  const parts = [];
-  if (person.birthDate) parts.push(`Nac: ${person.birthDate}`);
-  if (person.birthPlace) parts.push(`Lugar: ${person.birthPlace}`);
-  return parts;
-}
-
-function cloudStatusText(status) {
-  switch (status) {
-    case "saved":
-      return "Guardado";
-    case "loaded":
-      return "Cargado";
-    case "created":
-      return "Creado";
-    case "shared":
-      return "Compartido";
-    case "pending":
-      return "Pendiente";
-    case "error":
-      return "Error";
-    default:
-      return "Listo";
+function buildSingleFlowLayout(people, isMobile) {
+  const patriarch = getPatriarch(people);
+  if (!patriarch) {
+    return { patriarch: null, cards: {}, edges: [], width: isMobile ? 980 : 1480, height: isMobile ? 760 : 960 };
   }
+
+  const rootUnit = buildSingleFlowUnit(people, patriarch.id);
+  const measured = measureUnit(rootUnit, isMobile);
+  const cards = {};
+  const edges = [];
+  placeUnit(measured, 0, 0, isMobile, cards, edges);
+
+  const ids = Object.keys(cards);
+  const minX = Math.min(...ids.map((id) => cards[id].x));
+  const maxX = Math.max(...ids.map((id) => cards[id].x + cards[id].width));
+  const maxY = Math.max(...ids.map((id) => cards[id].y + cards[id].height));
+  const padX = isMobile ? 90 : 160;
+  const padY = isMobile ? 80 : 120;
+
+  ids.forEach((id) => {
+    cards[id].x = cards[id].x - minX + padX;
+    cards[id].y = cards[id].y + padY;
+    cards[id].centerX = cards[id].x + cards[id].width / 2;
+    cards[id].centerY = cards[id].y + cards[id].height / 2;
+  });
+
+  edges.forEach((edge) => {
+    edge.fromX = edge.fromX - minX + padX;
+    edge.toX = edge.toX - minX + padX;
+    edge.fromY += padY;
+    edge.toY += padY;
+  });
+
+  return {
+    patriarch,
+    cards,
+    edges,
+    width: Math.max(maxX - minX + padX * 2, isMobile ? 980 : 1500),
+    height: Math.max(maxY + padY * 2 + (isMobile ? 90 : 140), isMobile ? 760 : 940),
+  };
 }
 
-function CelticTreeLogo({ size = 74 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 160 160"
-      aria-hidden="true"
-      style={{ display: "block" }}
-    >
-      <defs>
-        <linearGradient id="aknaGradMain" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#4ade80" />
-          <stop offset="55%" stopColor="#22c55e" />
-          <stop offset="100%" stopColor="#166534" />
-        </linearGradient>
 
-        <linearGradient id="aknaGradSoft" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#ecfdf3" />
-          <stop offset="100%" stopColor="#d1fae5" />
-        </linearGradient>
-
-        <filter id="aknaShadow" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="6" stdDeviation="8" floodColor="#166534" floodOpacity="0.18" />
-        </filter>
-      </defs>
-
-      <circle cx="80" cy="80" r="71" fill="url(#aknaGradSoft)" opacity="0.55" />
-      <circle
-        cx="80"
-        cy="80"
-        r="67"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="5.5"
-        filter="url(#aknaShadow)"
-      />
-      <circle
-        cx="80"
-        cy="80"
-        r="52"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="3.5"
-        opacity="0.9"
-      />
-
-      <path
-        d="M80 26
-           C60 30, 46 46, 46 64
-           C46 78, 53 90, 67 98
-           C55 102, 47 112, 47 124
-           C47 134, 54 141, 64 141
-           C75 141, 80 132, 80 122
-           C80 132, 85 141, 96 141
-           C106 141, 113 134, 113 124
-           C113 112, 105 102, 93 98
-           C107 90, 114 78, 114 64
-           C114 46, 100 30, 80 26Z"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="5.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      <path
-        d="M80 42
-           C69 47, 61 58, 61 68
-           C61 79, 68 87, 80 92
-           C92 87, 99 79, 99 68
-           C99 58, 91 47, 80 42Z"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="4.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      <path d="M80 58 L80 132" stroke="url(#aknaGradMain)" strokeWidth="6" strokeLinecap="round" />
-
-      <path
-        d="M80 73
-           C70 72, 61 66, 55 57
-           M80 73
-           C90 72, 99 66, 105 57"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="4.5"
-        strokeLinecap="round"
-      />
-
-      <path
-        d="M80 95
-           C69 95, 60 101, 55 111
-           M80 95
-           C91 95, 100 101, 105 111"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="4.5"
-        strokeLinecap="round"
-      />
-
-      <path
-        d="M61 43
-           C65 36, 72 31, 80 29
-           C88 31, 95 36, 99 43"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-        opacity="0.9"
-      />
-
-      <path
-        d="M58 118
-           C64 127, 72 132, 80 134
-           C88 132, 96 127, 102 118"
-        fill="none"
-        stroke="url(#aknaGradMain)"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-        opacity="0.9"
-      />
-    </svg>
-  );
+function normalizeId(value) {
+  if (value === null || value === undefined || value === "") return "";
+  return String(value);
 }
 
-function PersonMini({
-  person,
-  onEdit,
-  onDelete,
-  onQuickAddPartner,
-  onQuickAddChild,
-  isMobile,
-}) {
-  const details = personSummary(person);
-  const compact = isMobile;
+function normalizeText(value) {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function cleanPeopleForCloud(rawPeople = []) {
+  if (!Array.isArray(rawPeople)) return [];
+
+  return rawPeople.map((person, index) => ({
+    id: normalizeId(person?.id || `person-${index}`),
+    name: normalizeText(person?.name).trim(),
+    photo: normalizeText(person?.photo),
+    partnerId: normalizeId(person?.partnerId),
+    parent1: normalizeId(person?.parent1),
+    parent2: normalizeId(person?.parent2),
+    birthDate: normalizeText(person?.birthDate),
+    birthPlace: normalizeText(person?.birthPlace),
+    deathDate: normalizeText(person?.deathDate),
+    notes: normalizeText(person?.notes),
+  }));
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function edgePath(edge) {
+  if (edge.type === "couple") {
+    const dx = Math.abs(edge.toX - edge.fromX);
+    const curve = Math.max(10, Math.min(28, dx * 0.18));
+    return `M ${edge.fromX} ${edge.fromY} C ${edge.fromX + curve} ${edge.fromY}, ${edge.toX - curve} ${edge.toY}, ${edge.toX} ${edge.toY}`;
+  }
+
+  if (edge.type === "branch") {
+    const dy = edge.toY - edge.fromY;
+    const spread = Math.abs(edge.toX - edge.fromX);
+    const c1y = edge.fromY + Math.max(20, dy * 0.14);
+    const c2y = edge.fromY + Math.max(42, dy * 0.36);
+    const c3y = edge.toY - Math.max(18, dy * 0.1);
+    const drift = Math.max(12, Math.min(44, spread * 0.12));
+    const c1x = edge.fromX;
+    const c2x = edge.fromX + (edge.toX > edge.fromX ? drift : -drift);
+    const c3x = edge.toX - (edge.toX > edge.fromX ? drift * 0.35 : -drift * 0.35);
+    return `M ${edge.fromX} ${edge.fromY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${c3x} ${c3y} S ${edge.toX} ${edge.toY - 4}, ${edge.toX} ${edge.toY}`;
+  }
+
+  const midY = (edge.fromY + edge.toY) / 2;
+  return `M ${edge.fromX} ${edge.fromY} C ${edge.fromX} ${midY}, ${edge.toX} ${midY}, ${edge.toX} ${edge.toY}`;
+}
+
+function PersonCard({ person, layout, activeProfileId, setActiveProfileId, onQuickAddChild, highlighted }) {
+  const isOpen = activeProfileId === person.id;
+  const initial = (person.name || "?").trim().charAt(0).toUpperCase() || "?";
 
   return (
     <div
-      xmlns="http://www.w3.org/1999/xhtml"
-      style={{
-        ...personMiniStyle,
-        width: compact ? "136px" : "220px",
-        minHeight: compact ? "230px" : "345px",
-        padding: compact ? "8px" : "14px",
-      }}
+      className={`ft-card ${highlighted ? "is-highlighted" : ""} ${isOpen ? "is-open" : ""} ${layout.isPatriarch ? "is-patriarch" : ""} ${person.deathDate ? "is-deceased" : ""}`}
+      style={{ left: layout.x, top: layout.y, width: layout.width }}
+      onClick={() => setActiveProfileId(isOpen ? "" : person.id)}
     >
-      <div
-        style={{
-          ...personMiniImageWrapStyle,
-          height: compact ? "84px" : "132px",
-          marginBottom: compact ? "8px" : "12px",
-        }}
-      >
-        {person.photo ? (
-          <img src={person.photo} alt={person.name} style={imageStyle} />
-        ) : (
-          <div style={imagePlaceholderStyle}>Sin foto</div>
-        )}
-      </div>
-
-      <div
-        style={{
-          ...personMiniNameStyle,
-          fontSize: compact ? "11px" : "16px",
-          minHeight: compact ? "28px" : "42px",
-          marginBottom: compact ? "8px" : "10px",
-        }}
-      >
-        {person.name}
-      </div>
-
-      <div
-        style={{
-          ...personMiniInfoStyle,
-          minHeight: compact ? "48px" : "72px",
-          fontSize: compact ? "9px" : "11px",
-          padding: compact ? "6px" : "9px",
-          marginBottom: compact ? "8px" : "12px",
-        }}
-      >
-        {details.length > 0 ? (
-          details.map((item, idx) => <div key={idx}>{item}</div>)
-        ) : (
-          <div style={{ color: "#89a293" }}>Sin datos</div>
-        )}
-      </div>
-
-      {person.notes ? (
-        <div
-          style={{
-            ...personMiniNotesStyle,
-            fontSize: compact ? "8px" : "10px",
-            padding: compact ? "5px 6px" : "7px 8px",
-            marginBottom: compact ? "8px" : "10px",
-          }}
-        >
-          {person.notes}
+      <div className="ft-card-main">
+        <div className="ft-avatar-wrap">
+          {person.photo ? (
+            <img className="ft-avatar" src={person.photo} alt={person.name} />
+          ) : (
+            <div className="ft-avatar ft-avatar-fallback">{initial}</div>
+          )}
         </div>
-      ) : null}
 
-      <div style={{ ...personMiniButtonsStyle, gap: compact ? "6px" : "8px" }}>
+        <div className="ft-card-texts">
+          {layout.isPatriarch ? <div className="ft-card-badge">Patriarca</div> : null}
+          <div className="ft-card-name" title={person.name || "Sin nombre"}>{person.name || "Sin nombre"}</div>
+          <div className="ft-card-date">{formatDate(person.birthDate)}{person.deathDate ? ` · † ${formatDate(person.deathDate)}` : ""}</div>
+        </div>
+
         <button
-          style={{
-            ...editButtonStyle,
-            padding: compact ? "7px 6px" : "11px 10px",
-            fontSize: compact ? "10px" : "13px",
+          type="button"
+          className="ft-mini-add"
+          onClick={(e) => {
+            e.stopPropagation();
+            onQuickAddChild(person);
           }}
-          onClick={() => onEdit(person)}
+          title="Agregar hijo"
         >
-          Editar
-        </button>
-        <button
-          style={{
-            ...deleteButtonStyle,
-            padding: compact ? "7px 6px" : "11px 10px",
-            fontSize: compact ? "10px" : "13px",
-          }}
-          onClick={() => onDelete(person.id)}
-        >
-          Eliminar
+          +
         </button>
       </div>
 
-      <div style={{ ...personMiniButtonsStyle, gap: compact ? "6px" : "8px", marginBottom: 0 }}>
-        {!person.partnerId ? (
-          <button
-            style={{
-              ...softGreenButtonStyle,
-              padding: compact ? "7px 6px" : "11px 10px",
-              fontSize: compact ? "10px" : "13px",
-            }}
-            onClick={() => onQuickAddPartner(person)}
-          >
-            + Pareja
-          </button>
-        ) : (
-          <div style={{ flex: 1 }} />
-        )}
-        <button
-          style={{
-            ...softBlueButtonStyle,
-            padding: compact ? "7px 6px" : "11px 10px",
-            fontSize: compact ? "10px" : "13px",
-          }}
-          onClick={() => onQuickAddChild(person)}
-        >
-          + Hijo
-        </button>
+      {isOpen ? <div className="ft-profile-arrow" /> : null}
+    </div>
+  );
+}
+
+function ProfilePopover({ person, people, layout, onEditPerson, onDeletePerson, onQuickAddChild, onQuickAddPartner, onClose }) {
+  if (!person || !layout) return null;
+
+  const parent1 = getPersonById(people, person.parent1);
+  const parent2 = getPersonById(people, person.parent2);
+  const partner = getPersonById(people, person.partnerId);
+  const children = people.filter((p) => p.parent1 === person.id || p.parent2 === person.id);
+
+  return (
+    <div className="ft-profile-popover" style={{ left: layout.x + layout.width / 2, top: layout.y + layout.height + 16 }}>
+      <div className="ft-profile-card">
+        <button type="button" className="ft-profile-close" onClick={onClose}>×</button>
+
+        <div className="ft-profile-head">
+          {person.photo ? (
+            <img className="ft-profile-photo" src={person.photo} alt={person.name} />
+          ) : (
+            <div className="ft-profile-photo ft-avatar-fallback">{(person.name || "?").trim().charAt(0).toUpperCase() || "?"}</div>
+          )}
+          <div>
+            <div className="ft-profile-name">{person.name || "Sin nombre"}</div>
+            <div className="ft-profile-sub">{formatDate(person.birthDate)}</div>
+          </div>
+        </div>
+
+        <div className="ft-profile-grid">
+          <div><span>Lugar:</span> {person.birthPlace || "Sin dato"}</div>
+          <div><span>Pareja:</span> {partner?.name || "Sin pareja"}</div>
+          <div><span>Padre:</span> {parent1?.name || "Sin dato"}</div>
+          <div><span>Madre:</span> {parent2?.name || "Sin dato"}</div>
+          <div><span>Fallecimiento:</span> {person.deathDate ? formatDate(person.deathDate) : "Sin dato"}</div>
+          <div><span>Hijos:</span> {children.length}</div>
+          <div><span>Notas:</span> {person.notes || "Sin notas"}</div>
+        </div>
+
+        <div className="ft-profile-actions">
+          <button type="button" className="ft-btn ft-btn-primary" onClick={() => onEditPerson(person)}>Editar</button>
+          <button type="button" className="ft-btn ft-btn-success" onClick={() => onQuickAddChild(person)}>+ Hijo</button>
+          <button type="button" className="ft-btn ft-btn-muted" onClick={() => onQuickAddPartner(person)}>+ Pareja</button>
+          <button type="button" className="ft-btn ft-btn-danger" onClick={() => onDeletePerson(person.id)}>Eliminar</button>
+        </div>
       </div>
     </div>
   );
 }
 
-function FamilyBlock({
-  node,
-  x,
-  y,
-  root,
-  onEdit,
-  onDelete,
-  onQuickAddPartner,
-  onQuickAddChild,
-  onToggleCollapse,
-  onOpenFamily,
-  highlightedId,
-  isMobile,
-}) {
-  const { person, partner, hiddenChildrenCount, collapsed } = node;
-  const compact = isMobile;
-  const w = compact ? (partner ? 334 : 162) : partner ? 585 : 308;
-  const h = compact ? (root ? 350 : 330) : root ? 530 : 500;
-  const left = x - w / 2;
-  const top = y;
-
-  const isHighlighted =
-    highlightedId && (highlightedId === person.id || highlightedId === partner?.id);
-
-  return (
-    <foreignObject x={left} y={top} width={w} height={h}>
-      <div
-        xmlns="http://www.w3.org/1999/xhtml"
-        style={{
-          ...(root ? familyBlockRootStyle : familyBlockStyle),
-          ...(isHighlighted ? highlightedBlockStyle : {}),
-          padding: compact ? "10px" : "18px",
-        }}
-      >
-        <div style={{ ...familyTopStripStyle, marginBottom: compact ? "8px" : "12px" }}>
-          <div style={{ ...familyBadgeStyle, fontSize: compact ? "10px" : "12px" }}>
-            {partner ? "Familia" : "Persona"}
-          </div>
-
-          {hiddenChildrenCount > 0 ? (
-            <button
-              style={{
-                ...collapseButtonStyle,
-                padding: compact ? "6px 8px" : "9px 12px",
-                fontSize: compact ? "10px" : "12px",
-              }}
-              onClick={() => onToggleCollapse(person.id)}
-            >
-              {collapsed ? `Abrir (${hiddenChildrenCount})` : `Ocultar (${hiddenChildrenCount})`}
-            </button>
-          ) : null}
-        </div>
-
-        <div
-          style={
-            partner
-              ? {
-                  ...familyPeopleRowStyle,
-                  gap: compact ? "8px" : "18px",
-                }
-              : familyPeopleSingleStyle
-          }
-        >
-          <PersonMini
-            person={person}
-            onEdit={onEdit}
-            onDelete={onDelete}
-            onQuickAddPartner={onQuickAddPartner}
-            onQuickAddChild={onQuickAddChild}
-            isMobile={isMobile}
-          />
-
-          {partner ? (
-            <>
-              <div style={{ ...partnerCenterLinkWrapStyle, width: compact ? "16px" : "26px" }}>
-                <div style={partnerPillWrapStyle}>
-                  <div
-                    style={{
-                      ...partnerCenterLinkStyle,
-                      width: compact ? "14px" : "24px",
-                      height: compact ? "4px" : "5px",
-                    }}
-                  />
-                </div>
-              </div>
-
-              <PersonMini
-                person={partner}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onQuickAddPartner={onQuickAddPartner}
-                onQuickAddChild={onQuickAddChild}
-                isMobile={isMobile}
-              />
-            </>
-          ) : null}
-        </div>
-
-        <div style={{ ...familyBottomMetaStyle, marginTop: compact ? "10px" : "14px" }}>
-          <span
-            style={{
-              ...metaChipStyle,
-              padding: compact ? "5px 8px" : "8px 12px",
-              fontSize: compact ? "10px" : "12px",
-            }}
-          >
-            {hiddenChildrenCount} hijo{hiddenChildrenCount === 1 ? "" : "s"}
-          </span>
-
-          {partner ? (
-            <span
-              style={{
-                ...metaChipBlueStyle,
-                padding: compact ? "5px 8px" : "8px 12px",
-                fontSize: compact ? "10px" : "12px",
-              }}
-            >
-              Pareja enlazada
-            </span>
-          ) : null}
-        </div>
-
-        <div
-          style={{
-            ...familyBottomActionsStyle,
-            marginTop: compact ? "10px" : "16px",
-            gap: compact ? "6px" : "10px",
-          }}
-        >
-          <button
-            style={{
-              ...familyActionButtonGreen,
-              padding: compact ? "8px 10px" : "13px 18px",
-              fontSize: compact ? "10px" : "13px",
-            }}
-            onClick={() => onQuickAddChild(person)}
-          >
-            + Hijo
-          </button>
-
-          {!partner ? (
-            <button
-              style={{
-                ...familyActionButtonBlue,
-                padding: compact ? "8px 10px" : "13px 18px",
-                fontSize: compact ? "10px" : "13px",
-              }}
-              onClick={() => onQuickAddPartner(person)}
-            >
-              + Pareja
-            </button>
-          ) : (
-            <button
-              style={{
-                ...familyActionButtonGray,
-                padding: compact ? "8px 10px" : "13px 18px",
-                fontSize: compact ? "10px" : "13px",
-              }}
-              onClick={() => onOpenFamily(node)}
-            >
-              Ver familia
-            </button>
-          )}
-        </div>
-      </div>
-    </foreignObject>
-  );
-}
-
-function PersonEditorPanel({
-  open,
-  people,
-  form,
-  setForm,
-  onSave,
-  onClose,
-  onDeleteCurrent,
-  onImage,
-  isMobile,
-}) {
+function PersonModal({ open, form, setForm, people, onClose, onSave, onDeleteCurrent }) {
   if (!open) return null;
 
   return (
-    <div style={overlayStyle}>
-      <div
-        style={{
-          ...sidePanelStyle,
-          width: isMobile ? "100%" : "430px",
-          borderRadius: isMobile ? "0" : "0",
-        }}
-      >
-        <div style={panelHeaderStyle}>
-          <div style={panelTitleStyle}>{form.id ? "Editar familiar" : "Agregar familiar"}</div>
-          <button style={panelCloseStyle} onClick={onClose}>
-            ✕
-          </button>
+    <div className="ft-modal-backdrop" onClick={onClose}>
+      <div className="ft-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ft-modal-head">
+          <h3>{form.id ? "Editar familiar" : "Agregar familiar"}</h3>
+          <button type="button" className="ft-close-btn" onClick={onClose}>×</button>
         </div>
 
-        <div style={panelBodyStyle}>
-          <label style={labelStyle}>Nombre</label>
-          <input
-            type="text"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            style={inputStyle}
-            placeholder="Nombre del familiar"
-          />
+        <div className="ft-form-grid">
+          <label>
+            <span>Nombre completo</span>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
 
-          <label style={labelStyle}>Pareja</label>
-          <select
-            value={form.partnerId}
-            onChange={(e) => setForm({ ...form, partnerId: e.target.value })}
-            style={inputStyle}
-          >
-            <option value="">Selecciona pareja</option>
-            {people
-              .filter((p) => p.id !== form.id)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+          <label>
+            <span>Pareja</span>
+            <select value={form.partnerId} onChange={(e) => setForm({ ...form, partnerId: e.target.value })}>
+              <option value="">Selecciona pareja</option>
+              {people.filter((p) => p.id !== form.id).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
-          </select>
+            </select>
+          </label>
 
-          <label style={labelStyle}>Padre / Madre 1</label>
-          <select
-            value={form.parent1}
-            onChange={(e) => setForm({ ...form, parent1: e.target.value })}
-            style={inputStyle}
-          >
-            <option value="">Selecciona una persona</option>
-            {people
-              .filter((p) => p.id !== form.id)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+          <label>
+            <span>Padre</span>
+            <select value={form.parent1} onChange={(e) => setForm({ ...form, parent1: e.target.value })}>
+              <option value="">Selecciona una persona</option>
+              {people.filter((p) => p.id !== form.id).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
-          </select>
+            </select>
+          </label>
 
-          <label style={labelStyle}>Padre / Madre 2</label>
-          <select
-            value={form.parent2}
-            onChange={(e) => setForm({ ...form, parent2: e.target.value })}
-            style={inputStyle}
-          >
-            <option value="">Selecciona una persona</option>
-            {people
-              .filter((p) => p.id !== form.id)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+          <label>
+            <span>Madre</span>
+            <select value={form.parent2} onChange={(e) => setForm({ ...form, parent2: e.target.value })}>
+              <option value="">Selecciona una persona</option>
+              {people.filter((p) => p.id !== form.id).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
-          </select>
+            </select>
+          </label>
 
-          <label style={labelStyle}>Fecha de nacimiento</label>
-          <input
-            type="date"
-            value={form.birthDate}
-            onChange={(e) => setForm({ ...form, birthDate: e.target.value })}
-            style={inputStyle}
-          />
+          <label>
+            <span>Fecha de nacimiento</span>
+            <input type="date" value={form.birthDate} onChange={(e) => setForm({ ...form, birthDate: e.target.value })} />
+          </label>
 
-          <label style={labelStyle}>Lugar de nacimiento</label>
-          <input
-            type="text"
-            value={form.birthPlace}
-            onChange={(e) => setForm({ ...form, birthPlace: e.target.value })}
-            style={inputStyle}
-            placeholder="Lugar de nacimiento"
-          />
+          <label>
+            <span>Lugar de nacimiento</span>
+            <input value={form.birthPlace} onChange={(e) => setForm({ ...form, birthPlace: e.target.value })} />
+          </label>
 
-          <label style={labelStyle}>Foto</label>
-          <input type="file" accept="image/*" onChange={onImage} style={fileInputStyle} />
-          {form.photo ? (
-            <div style={sidePreviewWrapStyle}>
-              <img src={form.photo} alt="Preview" style={previewImageStyle} />
-            </div>
-          ) : null}
+          <label>
+            <span>Fecha de muerte</span>
+            <input type="date" value={form.deathDate} onChange={(e) => setForm({ ...form, deathDate: e.target.value })} />
+          </label>
 
-          <label style={labelStyle}>Notas</label>
-          <textarea
-            value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            style={textareaStyle}
-            placeholder="Notas"
-          />
+          <label className="ft-form-full">
+            <span>Notas</span>
+            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={4} />
+          </label>
 
-          <div
-            style={{
-              ...sideButtonRowStyle,
-              flexDirection: isMobile ? "column" : "row",
-            }}
-          >
-            <button style={primaryButton} onClick={onSave}>
-              {form.id ? "Guardar cambios" : "Guardar"}
-            </button>
-            {form.id ? (
-              <button style={dangerButton} onClick={onDeleteCurrent}>
-                Eliminar
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FamilyPanel({
-  open,
-  node,
-  people,
-  onClose,
-  onEditPerson,
-  onQuickAddChild,
-  onQuickAddPartner,
-  isMobile,
-}) {
-  if (!open || !node) return null;
-
-  const children = getChildrenOfPair(people, node.person.id, node.partner?.id || "");
-
-  return (
-    <div style={overlayCenterStyle}>
-      <div
-        style={{
-          ...familyPanelStyle,
-          width: isMobile ? "96vw" : "760px",
-        }}
-      >
-        <div style={panelHeaderStyle}>
-          <div style={panelTitleStyle}>Panel familiar</div>
-          <button style={panelCloseStyle} onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        <div style={familyPanelBodyStyle}>
-          <div style={familySectionStyle}>
-            <div style={familySectionTitleStyle}>Principal</div>
-            <div
-              style={{
-                ...familyItemCardStyle,
-                flexDirection: isMobile ? "column" : "row",
-                alignItems: isMobile ? "flex-start" : "center",
+          <label className="ft-form-full">
+            <span>Foto</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const photo = await readAsDataUrl(file);
+                setForm((prev) => ({ ...prev, photo }));
               }}
-            >
-              <div style={familyItemNameStyle}>{node.person.name}</div>
-              <button style={secondaryButton} onClick={() => onEditPerson(node.person)}>
-                Editar principal
-              </button>
-            </div>
-          </div>
+            />
+          </label>
+        </div>
 
-          <div style={familySectionStyle}>
-            <div style={familySectionTitleStyle}>Pareja</div>
-            {node.partner ? (
-              <div
-                style={{
-                  ...familyItemCardStyle,
-                  flexDirection: isMobile ? "column" : "row",
-                  alignItems: isMobile ? "flex-start" : "center",
-                }}
-              >
-                <div style={familyItemNameStyle}>{node.partner.name}</div>
-                <button style={secondaryButton} onClick={() => onEditPerson(node.partner)}>
-                  Editar pareja
-                </button>
-              </div>
-            ) : (
-              <div
-                style={{
-                  ...familyItemCardStyle,
-                  flexDirection: isMobile ? "column" : "row",
-                  alignItems: isMobile ? "flex-start" : "center",
-                }}
-              >
-                <div style={familyItemNameStyle}>No hay pareja registrada</div>
-                <button
-                  style={familyActionButtonBlue}
-                  onClick={() => onQuickAddPartner(node.person)}
-                >
-                  + Agregar pareja
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div style={familySectionStyle}>
-            <div style={familySectionTitleStyle}>Hijos</div>
-            <div style={childrenListStyle}>
-              {children.length ? (
-                children.map((child) => (
-                  <div
-                    key={child.id}
-                    style={{
-                      ...childRowStyle,
-                      flexDirection: isMobile ? "column" : "row",
-                      alignItems: isMobile ? "flex-start" : "center",
-                    }}
-                  >
-                    <div style={childNameStyle}>{child.name}</div>
-                    <button style={secondaryButton} onClick={() => onEditPerson(child)}>
-                      Editar
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <div style={familyItemCardStyle}>No hay hijos registrados</div>
-              )}
-            </div>
-            <button style={familyActionButtonGreen} onClick={() => onQuickAddChild(node.person)}>
-              + Agregar hijo
-            </button>
-          </div>
+        <div className="ft-modal-actions">
+          <button type="button" className="ft-btn ft-btn-primary" onClick={onSave}>Guardar</button>
+          {form.id ? <button type="button" className="ft-btn ft-btn-danger" onClick={onDeleteCurrent}>Eliminar</button> : null}
         </div>
       </div>
     </div>
@@ -826,2255 +467,432 @@ function FamilyPanel({
 }
 
 export default function FamilyTreeApp({ user }) {
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== "undefined" ? window.innerWidth <= 768 : false
-  );
-
-  const viewportRef = useRef(null);
-  const dragRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
-
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [trees, setTrees] = useState([]);
-  const [currentTreeId, setCurrentTreeId] = useState(null);
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 900 : false);
+  const [currentTreeId, setCurrentTreeId] = useState("");
   const [treeName, setTreeName] = useState("Mi árbol familiar");
-  const [cloudStatus, setCloudStatus] = useState("loaded");
-  const [isPublic, setIsPublic] = useState(false);
-  const [publicSlug, setPublicSlug] = useState("");
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [didInitialCenter, setDidInitialCenter] = useState(false);
-
   const [people, setPeople] = useState([]);
-  const [historyPast, setHistoryPast] = useState([]);
-  const [historyFuture, setHistoryFuture] = useState([]);
-
-  const [form, setForm] = useState(emptyPerson());
-  const [collapsedIds, setCollapsedIds] = useState([]);
-  const [personPanelOpen, setPersonPanelOpen] = useState(false);
-  const [familyPanelOpen, setFamilyPanelOpen] = useState(false);
-  const [selectedFamilyNode, setSelectedFamilyNode] = useState(null);
-
-  const [centerId, setCenterId] = useState("");
-  const [zoom, setZoom] = useState(isMobile ? 0.95 : 0.94);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [dragging, setDragging] = useState(false);
-
+  const [zoom, setZoom] = useState(isMobile ? 0.82 : 1);
   const [searchText, setSearchText] = useState("");
-  const [selectedSearchId, setSelectedSearchId] = useState("");
-  const [lastCreatedId, setLastCreatedId] = useState("");
+  const [activeProfileId, setActiveProfileId] = useState("");
+  const [form, setForm] = useState(emptyPerson());
+  const [personModalOpen, setPersonModalOpen] = useState(false);
+  const [statusText, setStatusText] = useState("Cargando");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveToast, setSaveToast] = useState("");
+  const [saveTone, setSaveTone] = useState("idle");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const viewportRef = useRef(null);
+  const exportRef = useRef(null);
+  const mapShellRef = useRef(null);
+  const saveTimeoutRef = useRef(null);
+  const toastTimeoutRef = useRef(null);
 
-  const collapsedSet = useMemo(() => new Set(collapsedIds), [collapsedIds]);
-  const roots = useMemo(() => getRoots(people), [people]);
-
-  const filteredPeople = useMemo(() => {
-    const q = searchText.trim().toLowerCase();
-    if (!q) return people.slice(0, 50);
-    return people.filter((p) => (p.name || "").toLowerCase().includes(q)).slice(0, 50);
-  }, [people, searchText]);
-
-  const tree = useMemo(() => {
-    if (!centerId) return null;
-    return buildTree(people, centerId, collapsedSet);
-  }, [people, centerId, collapsedSet]);
-
-  const layout = useMemo(() => {
-    if (!tree) return null;
-    return measureTree(tree);
-  }, [tree]);
-
-  const positions = useMemo(() => {
-    if (!layout) return {};
-    return createPositions(layout, isMobile);
-  }, [layout, isMobile]);
-
-  function centerOnNode(nodeId, zoomValue = null) {
-    if (!nodeId || !positions[nodeId]) return;
-    const pos = positions[nodeId];
-
-    setPan({
-      x: -pos.x,
-      y: -pos.y + (isMobile ? 220 : 150),
-    });
-
-    if (typeof zoomValue === "number") {
-      setZoom(zoomValue);
-    }
-  }
-
-  function commitPeopleChange(nextPeople) {
-    setHistoryPast((prev) => [...prev, people]);
-    setHistoryFuture([]);
-    setPeople(nextPeople);
-    setHasUnsavedChanges(true);
-    setCloudStatus("pending");
-  }
-
-  function handleUndo() {
-    if (!historyPast.length) return;
-    const previous = historyPast[historyPast.length - 1];
-    setHistoryPast((prev) => prev.slice(0, -1));
-    setHistoryFuture((prev) => [people, ...prev]);
-    setPeople(previous);
-    setHasUnsavedChanges(true);
-    setCloudStatus("pending");
-  }
-
-  function handleRedo() {
-    if (!historyFuture.length) return;
-    const next = historyFuture[0];
-    setHistoryFuture((prev) => prev.slice(1));
-    setHistoryPast((prev) => [...prev, people]);
-    setPeople(next);
-    setHasUnsavedChanges(true);
-    setCloudStatus("pending");
-  }
+  const showSaveToast = useCallback((message, tone = "saved", duration = 2200) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setSaveTone(tone);
+    setSaveToast(message);
+    toastTimeoutRef.current = setTimeout(() => {
+      setSaveToast("");
+      setSaveTone("idle");
+    }, duration);
+  }, []);
 
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    const onResize = () => setIsMobile(window.innerWidth <= 900);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
   useEffect(() => {
-    setZoom((prev) => {
-      if (isMobile && prev < 0.9) return 0.95;
-      if (!isMobile && prev < 0.85) return 0.94;
-      return prev;
-    });
-  }, [isMobile]);
-
-  useEffect(() => {
-    async function loadTrees() {
-      if (!user) {
-        setTrees([]);
-        setCurrentTreeId(null);
-        setTreeName("Mi árbol familiar");
-        setPeople([]);
-        setIsPublic(false);
-        setPublicSlug("");
-        setCloudStatus("loaded");
-        setHasUnsavedChanges(false);
-        setHistoryPast([]);
-        setHistoryFuture([]);
-        setCollapsedIds([]);
-        setCenterId("");
-        setSelectedSearchId("");
-        setLastCreatedId("");
-        setDidInitialCenter(false);
-        return;
-      }
-
+    const local = localStorage.getItem("ft-local-tree");
+    if (local) {
       try {
-        const list = await getUserTrees(user.uid);
-        setTrees(list);
-
-        if (list.length > 0) {
-          const firstTree = list[0];
-          setCurrentTreeId(firstTree.id);
-          setTreeName(firstTree.name || "Mi árbol familiar");
-          setPeople(Array.isArray(firstTree.people) ? firstTree.people : []);
-          setIsPublic(!!firstTree.isPublic);
-          setPublicSlug(firstTree.publicSlug || "");
-          setCloudStatus("loaded");
-          setHasUnsavedChanges(false);
-          setHistoryPast([]);
-          setHistoryFuture([]);
-          setDidInitialCenter(false);
-        } else {
-          const newTreeId = await createTree(user.uid, {
-            name: "Mi árbol familiar",
-            people: [],
-          });
-
-          const newTree = await getTree(user.uid, newTreeId);
-          setTrees(newTree ? [newTree] : []);
-          setCurrentTreeId(newTreeId);
-          setTreeName(newTree?.name || "Mi árbol familiar");
-          setPeople(Array.isArray(newTree?.people) ? newTree.people : []);
-          setIsPublic(false);
-          setPublicSlug("");
-          setCloudStatus("created");
-          setHasUnsavedChanges(false);
-          setHistoryPast([]);
-          setHistoryFuture([]);
-          setDidInitialCenter(false);
-        }
-      } catch (error) {
-        console.error("Error cargando árboles:", error);
-        setCloudStatus("error");
-      }
+        const parsed = JSON.parse(local);
+        setPeople(parsed.people || []);
+        setTreeName(parsed.treeName || "Mi árbol familiar");
+      } catch {}
     }
-
-    loadTrees();
-  }, [user]);
-
-  useEffect(() => {
-    if (!roots.length) {
-      setCenterId("");
-      return;
-    }
-
-    if (!roots.some((r) => r.id === centerId)) {
-      setCenterId(roots[0].id);
-    }
-  }, [roots, centerId]);
-
-  useEffect(() => {
-    const handler = (e) => {
-      if (!hasUnsavedChanges) return;
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [hasUnsavedChanges]);
-
-  useEffect(() => {
-    if (!user || !currentTreeId) return;
-    if (!hasUnsavedChanges) return;
-
-    const timer = setTimeout(async () => {
-      try {
-        await saveTree(user.uid, currentTreeId, {
-          name: treeName,
-          people,
-          isPublic,
-          publicSlug,
-        });
-
-        await refreshTrees(user.uid);
-        setCloudStatus("saved");
-        setHasUnsavedChanges(false);
-      } catch (error) {
-        console.error("Error en autosave:", error);
-        setCloudStatus("error");
-      }
-    }, 1200);
-
-    return () => clearTimeout(timer);
-  }, [user, currentTreeId, treeName, people, isPublic, publicSlug, hasUnsavedChanges]);
-
-  useEffect(() => {
-    function onKeyDown(e) {
-      const isMac = navigator.platform.toUpperCase().includes("MAC");
-      const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
-      if (!ctrlOrCmd) return;
-
-      if (e.key.toLowerCase() === "z" && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      }
-
-      if (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey)) {
-        e.preventDefault();
-        handleRedo();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [historyPast, historyFuture, people]);
-
-  useEffect(() => {
-    if (!centerId || !positions[centerId]) return;
-
-    if (!didInitialCenter) {
-      centerOnNode(centerId, isMobile ? 0.95 : 0.94);
-      setDidInitialCenter(true);
-    }
-  }, [centerId, positions, isMobile, didInitialCenter]);
-
-  useEffect(() => {
-    if (!selectedSearchId || !positions[selectedSearchId]) return;
-    if (!didInitialCenter) return;
-
-    centerOnNode(selectedSearchId, isMobile ? 1.08 : 1);
-  }, [selectedSearchId, positions, isMobile, didInitialCenter]);
-
-  function startDrag(clientX, clientY) {
-    setDragging(true);
-    dragRef.current = {
-      x: clientX,
-      y: clientY,
-      panX: pan.x,
-      panY: pan.y,
-    };
-  }
-
-  function updateDrag(clientX, clientY) {
-    if (!dragging) return;
-
-    const dx = clientX - dragRef.current.x;
-    const dy = clientY - dragRef.current.y;
-
-    setPan({
-      x: dragRef.current.panX + dx,
-      y: dragRef.current.panY + dy,
-    });
-  }
-
-  function stopDrag() {
-    setDragging(false);
-  }
-
-  const onPointerDown = (e) => {
-    startDrag(e.clientX, e.clientY);
-  };
-
-  const onTouchStart = (e) => {
-    const touch = e.touches?.[0];
-    if (!touch) return;
-    startDrag(touch.clientX, touch.clientY);
-  };
-
-  useEffect(() => {
-    const handlePointerMove = (e) => updateDrag(e.clientX, e.clientY);
-    const handlePointerUp = () => stopDrag();
-
-    const handleTouchMove = (e) => {
-      const touch = e.touches?.[0];
-      if (!touch) return;
-      if (dragging) e.preventDefault();
-      updateDrag(touch.clientX, touch.clientY);
-    };
-
-    const handleTouchEnd = () => stopDrag();
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("touchmove", handleTouchMove, { passive: false });
-    window.addEventListener("touchend", handleTouchEnd);
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("touchmove", handleTouchMove);
-      window.removeEventListener("touchend", handleTouchEnd);
-    };
-  }, [dragging, pan]);
-
-  const toggleFullscreen = async () => {
-    try {
-      if (!document.fullscreenElement) {
-        await viewportRef.current?.requestFullscreen?.();
-        setIsFullscreen(true);
-      } else {
-        await document.exitFullscreen?.();
-        setIsFullscreen(false);
-      }
-    } catch (error) {
-      console.error("Error con pantalla completa:", error);
-    }
-  };
-
-  useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", handler);
-    return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
-  async function refreshTrees(uid) {
-    if (!uid) return;
-    const list = await getUserTrees(uid);
-    setTrees(list);
-  }
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
 
-  async function handleCreateTree() {
-    if (!user) {
-      alert("Debes iniciar sesión");
-      return;
-    }
-
-    try {
-      const newTreeId = await createTree(user.uid, {
-        name: `Árbol ${trees.length + 1}`,
-        people: [],
-      });
-
-      await refreshTrees(user.uid);
-
-      const newTree = await getTree(user.uid, newTreeId);
-      setCurrentTreeId(newTreeId);
-      setTreeName(newTree?.name || `Árbol ${trees.length + 1}`);
-      setPeople(Array.isArray(newTree?.people) ? newTree.people : []);
-      setCollapsedIds([]);
-      setSelectedSearchId("");
-      setSearchText("");
-      setCenterId("");
-      setLastCreatedId("");
-      setIsPublic(false);
-      setPublicSlug("");
-      setCloudStatus("created");
-      setHasUnsavedChanges(false);
-      setHistoryPast([]);
-      setHistoryFuture([]);
-      setPan({ x: 0, y: 0 });
-      setZoom(isMobile ? 0.95 : 0.94);
-      setDidInitialCenter(false);
-    } catch (error) {
-      console.error("Error creando árbol:", error);
-      setCloudStatus("error");
-    }
-  }
-
-  async function handleOpenTree(treeId) {
-    if (!user || !treeId) return;
-
-    try {
-      const treeData = await getTree(user.uid, treeId);
-      if (!treeData) return;
-
-      setCurrentTreeId(treeData.id);
-      setTreeName(treeData.name || "Mi árbol familiar");
-      setPeople(Array.isArray(treeData.people) ? treeData.people : []);
-      setIsPublic(!!treeData.isPublic);
-      setPublicSlug(treeData.publicSlug || "");
-      setCollapsedIds([]);
-      setSelectedSearchId("");
-      setSearchText("");
-      setCenterId("");
-      setLastCreatedId("");
-      setPersonPanelOpen(false);
-      setFamilyPanelOpen(false);
-      setForm(emptyPerson());
-      setCloudStatus("loaded");
-      setHasUnsavedChanges(false);
-      setHistoryPast([]);
-      setHistoryFuture([]);
-      setPan({ x: 0, y: 0 });
-      setZoom(isMobile ? 0.95 : 0.94);
-      setDidInitialCenter(false);
-    } catch (error) {
-      console.error("Error abriendo árbol:", error);
-      setCloudStatus("error");
-    }
-  }
-
-  async function handleSaveTree(customPeople = people) {
-    if (!user || !currentTreeId) return;
-
-    try {
-      await saveTree(user.uid, currentTreeId, {
-        name: treeName,
-        people: customPeople,
-        isPublic,
-        publicSlug,
-      });
-
-      await refreshTrees(user.uid);
-      setCloudStatus("saved");
-      setHasUnsavedChanges(false);
-    } catch (error) {
-      console.error("Error guardando árbol:", error);
-      setCloudStatus("error");
-    }
-  }
-
-  async function handleDeleteTree(treeId) {
-    if (!user || !treeId) return;
-
-    const ok = window.confirm("¿Seguro que deseas eliminar este árbol?");
-    if (!ok) return;
-
-    try {
-      await removeTree(user.uid, treeId);
-      const updated = await getUserTrees(user.uid);
-      setTrees(updated);
-
-      if (currentTreeId === treeId) {
-        if (updated.length > 0) {
-          const nextTree = updated[0];
-          setCurrentTreeId(nextTree.id);
-          setTreeName(nextTree.name || "Mi árbol familiar");
-          setPeople(Array.isArray(nextTree.people) ? nextTree.people : []);
-          setIsPublic(!!nextTree.isPublic);
-          setPublicSlug(nextTree.publicSlug || "");
-        } else {
-          const newTreeId = await createTree(user.uid, {
-            name: "Mi árbol familiar",
-            people: [],
-          });
-          const newTree = await getTree(user.uid, newTreeId);
-
-          setTrees(newTree ? [newTree] : []);
-          setCurrentTreeId(newTreeId);
-          setTreeName(newTree?.name || "Mi árbol familiar");
-          setPeople(Array.isArray(newTree?.people) ? newTree.people : []);
-          setIsPublic(false);
-          setPublicSlug("");
+  useEffect(() => {
+    let alive = true;
+    async function loadCloud() {
+      try {
+        const ownerId = user?.uid || user?.id || user?.email || "local-user";
+        const list = await getUserTrees(ownerId);
+        if (!alive || !Array.isArray(list)) return;
+        if (list.length) {
+          const firstId = list[0].id || list[0].treeId;
+          const remote = await getTree(firstId);
+          if (!alive || !remote) return;
+          setCurrentTreeId(firstId);
+          setTreeName(remote.name || remote.treeName || "Mi árbol familiar");
+          setPeople(Array.isArray(remote.people) ? remote.people : []);
         }
+        setStatusText("Listo");
+      } catch {
+        setStatusText("Modo local");
       }
+    }
+    loadCloud();
+    return () => {
+      alive = false;
+    };
+  }, [user]);
 
-      setCollapsedIds([]);
-      setSelectedSearchId("");
-      setSearchText("");
-      setCenterId("");
-      setLastCreatedId("");
-      setPersonPanelOpen(false);
-      setFamilyPanelOpen(false);
-      setForm(emptyPerson());
-      setCloudStatus("saved");
-      setHasUnsavedChanges(false);
-      setHistoryPast([]);
-      setHistoryFuture([]);
-      setDidInitialCenter(false);
+  const persistTreeToCloud = useCallback(async (options = {}) => {
+    const { silent = false, source = "auto" } = options;
+    const ownerId = normalizeText(user?.uid || user?.id || user?.email || "local-user");
+    const payload = {
+      name: normalizeText(treeName || "Mi árbol familiar").trim() || "Mi árbol familiar",
+      treeName: normalizeText(treeName || "Mi árbol familiar").trim() || "Mi árbol familiar",
+      ownerId,
+      people: cleanPeopleForCloud(people),
+      updatedAt: Date.now(),
+    };
+
+    localStorage.setItem("ft-local-tree", JSON.stringify({ treeName: payload.name, people: payload.people }));
+    if (!payload.name.trim() && !payload.people.length) return true;
+
+    setIsSaving(true);
+    setStatusText("Guardando en la nube...");
+    if (!silent) showSaveToast(source === "manual" ? "Guardando..." : "Guardando en la nube...", "saving", 1800);
+
+    try {
+      if (currentTreeId) {
+        await saveTree(String(currentTreeId), payload);
+      } else if (payload.people.length) {
+        const created = await createTree(payload);
+        if (created?.id) setCurrentTreeId(String(created.id));
+      }
+      setStatusText("Guardado en la nube");
+      if (!silent) {
+        showSaveToast(source === "manual" ? "Guardado correctamente" : "Guardado en la nube", "saved");
+      }
+      return true;
     } catch (error) {
-      console.error("Error eliminando árbol:", error);
-      setCloudStatus("error");
+      console.error("Error guardando en nube:", error);
+      setStatusText("Guardado local");
+      if (!silent) {
+        const detail = error?.message ? `Error nube: ${error.message}` : source === "manual" ? "No se pudo guardar" : "No se pudo guardar en la nube";
+        showSaveToast(detail, "error", 3200);
+      }
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [treeName, people, currentTreeId, user, showSaveToast]);
+
+  useEffect(() => {
+    localStorage.setItem("ft-local-tree", JSON.stringify({ treeName, people }));
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      persistTreeToCloud({ silent: false, source: "auto" });
+    }, 1200);
+    return () => saveTimeoutRef.current && clearTimeout(saveTimeoutRef.current);
+  }, [persistTreeToCloud]);
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      const current = document.fullscreenElement;
+      setIsFullscreen(Boolean(current && mapShellRef.current && current === mapShellRef.current));
+    }
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  const autoLayout = useMemo(() => buildSingleFlowLayout(people, isMobile), [people, isMobile]);
+  const cards = autoLayout.cards;
+  const activeLayout = activeProfileId ? cards[activeProfileId] : null;
+  const searchLower = searchText.trim().toLowerCase();
+  const publicTreeUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    if (currentTreeId) return `${window.location.origin}${window.location.pathname}?tree=${currentTreeId}`;
+    return window.location.href;
+  }, [currentTreeId]);
+
+  async function handleCopyTreeLink() {
+    try {
+      await navigator.clipboard.writeText(publicTreeUrl);
+      setStatusText("Enlace copiado");
+    } catch (error) {
+      console.error(error);
+      window.alert("No se pudo copiar el enlace");
     }
   }
 
   async function handleShareTree() {
-    if (!user || !currentTreeId) return;
-
     try {
-      const slug = await makeTreePublic(user.uid, currentTreeId, {
-        name: treeName,
-        people,
-      });
-
-      setIsPublic(true);
-      setPublicSlug(slug);
-      await refreshTrees(user.uid);
-      setCloudStatus("shared");
-      setHasUnsavedChanges(false);
-
-      const link = `${window.location.origin}/public/${slug}`;
-      await navigator.clipboard.writeText(link);
-      alert(`Link copiado:\n${link}`);
-    } catch (error) {
-      console.error("Error compartiendo árbol:", error);
-      setCloudStatus("error");
-      alert("No se pudo compartir el árbol");
-    }
-  }
-
-  async function handleUnshareTree() {
-    if (!user || !currentTreeId) return;
-
-    try {
-      await makeTreePrivate(user.uid, currentTreeId);
-      setIsPublic(false);
-      setPublicSlug("");
-      await refreshTrees(user.uid);
-      setCloudStatus("saved");
-    } catch (error) {
-      console.error("Error quitando modo público:", error);
-      setCloudStatus("error");
-      alert("No se pudo quitar el link público");
-    }
-  }
-
-  async function handleCopyPublicLink() {
-    if (!publicSlug) return;
-
-    try {
-      const link = `${window.location.origin}/public/${publicSlug}`;
-      await navigator.clipboard.writeText(link);
-      alert(`Link copiado:\n${link}`);
+      if (navigator.share) {
+        await navigator.share({
+          title: treeName || "Árbol Genealógico",
+          text: "Mira este árbol genealógico",
+          url: publicTreeUrl,
+        });
+        setStatusText("Compartido");
+        return;
+      }
+      await handleCopyTreeLink();
+      window.alert("Enlace copiado para compartir");
     } catch (error) {
       console.error(error);
-      alert("No se pudo copiar el link");
     }
   }
 
-  const focusPerson = (personId) => {
-    if (!personId || !positions[personId]) return;
-    setSelectedSearchId(personId);
-    centerOnNode(personId, isMobile ? 1.08 : 1.05);
-  };
-
-  const savePerson = async () => {
-    const cleanName = form.name.trim();
-    if (!cleanName) {
-      alert("Debes escribir el nombre.");
-      return;
+  async function handleCreateImage() {
+    try {
+      if (!exportRef.current) return;
+      setStatusText("Creando imagen");
+      await exportTreeAsImage(exportRef.current, autoLayout.width, autoLayout.height, treeName || "arbol-genealogico");
+      setStatusText("Imagen creada");
+    } catch (error) {
+      console.error(error);
+      setStatusText("No se pudo crear imagen");
+      window.alert("No se pudo crear la imagen del árbol");
     }
+  }
 
-    if (form.parent1 && form.parent2 && form.parent1 === form.parent2) {
-      alert("Padre/Madre 1 y Padre/Madre 2 no pueden ser la misma persona.");
-      return;
+  async function handleCreatePdf() {
+    try {
+      if (!exportRef.current) return;
+      setStatusText("Creando PDF");
+      await exportTreeAsPdf(exportRef.current, autoLayout.width, autoLayout.height, treeName || "arbol-genealogico");
+      setStatusText("PDF creado");
+    } catch (error) {
+      console.error(error);
+      setStatusText("No se pudo crear PDF");
+      window.alert("No se pudo crear el PDF del árbol");
     }
+  }
 
-    let nextPeople = [...people];
-    let createdPersonId = "";
+  async function handleManualSave() {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    await persistTreeToCloud({ silent: false, source: "manual" });
+  }
 
-    if (form.id) {
-      nextPeople = nextPeople.map((p) =>
-        p.id === form.id ? { ...p, ...form, name: cleanName } : p
-      );
+  function openNewPerson(base = {}) {
+    setForm({ ...emptyPerson(), ...base });
+    setPersonModalOpen(true);
+  }
 
-      if (form.partnerId) {
-        nextPeople = nextPeople.map((p) =>
-          p.id === form.partnerId ? { ...p, partnerId: form.id } : p
-        );
+  function handleSavePerson() {
+    if (!form.name.trim()) return;
+
+    const nextPerson = { ...form, id: form.id || uid() };
+
+    setPeople((prev) => {
+      const exists = prev.some((p) => p.id === nextPerson.id);
+      let next = exists ? prev.map((p) => (p.id === nextPerson.id ? nextPerson : p)) : [...prev, nextPerson];
+
+      if (nextPerson.partnerId) {
+        next = next.map((p) => (p.id === nextPerson.partnerId ? { ...p, partnerId: nextPerson.id } : p));
       }
 
-      nextPeople = nextPeople.map((p) => {
-        if (p.id !== form.id && p.partnerId === form.id && p.id !== form.partnerId) {
-          return { ...p, partnerId: "" };
-        }
-        return p;
-      });
+      return next;
+    });
 
-      createdPersonId = form.id;
-    } else {
-      const newId = uid();
-      const newPerson = {
-        ...form,
-        id: newId,
-        name: cleanName,
-      };
+    setPersonModalOpen(false);
+    setActiveProfileId(nextPerson.id);
+  }
 
-      nextPeople.push(newPerson);
-      createdPersonId = newId;
-      setLastCreatedId(newId);
+  function handleDeletePerson(personId) {
+    if (!window.confirm("¿Eliminar este familiar?")) return;
+    setPeople((prev) => prev.filter((p) => p.id !== personId).map((p) => ({
+      ...p,
+      partnerId: p.partnerId === personId ? "" : p.partnerId,
+      parent1: p.parent1 === personId ? "" : p.parent1,
+      parent2: p.parent2 === personId ? "" : p.parent2,
+    })));
+    if (activeProfileId === personId) setActiveProfileId("");
+    if (form.id === personId) setPersonModalOpen(false);
+  }
 
-      if (form.partnerId) {
-        nextPeople = nextPeople.map((p) =>
-          p.id === form.partnerId ? { ...p, partnerId: newId } : p
-        );
+  function handleEditPerson(person) {
+    setForm({ ...emptyPerson(), ...person });
+    setPersonModalOpen(true);
+  }
+
+  function handleQuickAddChild(parent) {
+    setForm({ ...emptyPerson(), parent1: parent.id, parent2: parent.partnerId || "" });
+    setPersonModalOpen(true);
+  }
+
+  function handleQuickAddPartner(person) {
+    setForm({ ...emptyPerson(), partnerId: person.id });
+    setPersonModalOpen(true);
+  }
+
+  function handleAutoCenter() {
+    const container = viewportRef.current;
+    if (!container) return;
+    container.scrollTo({
+      left: Math.max((autoLayout.width * zoom - container.clientWidth) / 2, 0),
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  async function toggleMapFullscreen() {
+    try {
+      const target = mapShellRef.current;
+      if (!target) return;
+      if (document.fullscreenElement === target) {
+        await document.exitFullscreen();
+        return;
       }
+      await target.requestFullscreen();
+    } catch (error) {
+      console.error(error);
+      window.alert("La pantalla completa no está disponible en este navegador o dispositivo.");
     }
+  }
 
-    commitPeopleChange(nextPeople);
+  useEffect(() => {
+    const t = setTimeout(handleAutoCenter, 80);
+    return () => clearTimeout(t);
+  }, [autoLayout.width, autoLayout.height, zoom]);
 
-    const nextRoots = getRoots(nextPeople);
-    if (!centerId && nextRoots.length > 0) {
-      setCenterId(nextRoots[0].id);
-    }
-
-    if (createdPersonId) {
-      setSelectedSearchId(createdPersonId);
-    }
-
-    setPersonPanelOpen(false);
-    setForm(emptyPerson());
-
-    if (user && currentTreeId) {
-      await handleSaveTree(nextPeople);
-    }
-  };
-
-  const openPersonEditor = (person) => {
-    setForm({
-      id: person.id,
-      name: person.name || "",
-      photo: person.photo || "",
-      partnerId: person.partnerId || "",
-      parent1: person.parent1 || "",
-      parent2: person.parent2 || "",
-      birthDate: person.birthDate || "",
-      birthPlace: person.birthPlace || "",
-      notes: person.notes || "",
-    });
-    setPersonPanelOpen(true);
-  };
-
-  const openFamilyEditor = (node) => {
-    setSelectedFamilyNode(node);
-    setFamilyPanelOpen(true);
-  };
-
-  const quickAddPartner = (person) => {
-    setForm({
-      ...emptyPerson(),
-      partnerId: person.id,
-    });
-    setPersonPanelOpen(true);
-    setFamilyPanelOpen(false);
-  };
-
-  const quickAddChild = (person) => {
-    setForm({
-      ...emptyPerson(),
-      parent1: person.id,
-      parent2: person.partnerId || "",
-    });
-    setPersonPanelOpen(true);
-    setFamilyPanelOpen(false);
-  };
-
-  const toggleCollapse = (personId) => {
-    setCollapsedIds((prev) =>
-      prev.includes(personId) ? prev.filter((id) => id !== personId) : [...prev, personId]
-    );
-  };
-
-  const expandAll = () => {
-    setCollapsedIds([]);
-  };
-
-  const fitTree = () => {
-    const targetId = centerId || roots[0]?.id;
-    setZoom(isMobile ? 0.95 : 0.84);
-
-    if (targetId && positions[targetId]) {
-      centerOnNode(targetId);
-    } else {
-      setPan({ x: 0, y: 0 });
-    }
-  };
-
-  const deletePerson = async (id) => {
-    if (!window.confirm("¿Seguro que deseas eliminar este familiar?")) return;
-
-    const nextPeople = people
-      .filter((p) => p.id !== id)
-      .map((p) => ({
-        ...p,
-        partnerId: p.partnerId === id ? "" : p.partnerId,
-        parent1: p.parent1 === id ? "" : p.parent1,
-        parent2: p.parent2 === id ? "" : p.parent2,
-      }));
-
-    commitPeopleChange(nextPeople);
-
-    if (form.id === id) {
-      setPersonPanelOpen(false);
-      setForm(emptyPerson());
-    }
-
-    if (user && currentTreeId) {
-      await handleSaveTree(nextPeople);
-    }
-  };
-
-  const handleImage = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setForm((prev) => ({
-        ...prev,
-        photo: String(reader.result || ""),
-      }));
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify(people, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "aknaweb_arbol.json";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const exportPNG = () => {
-    const svg = document.getElementById("family-tree-svg");
-    if (!svg) return;
-
-    const serializer = new XMLSerializer();
-    const source = serializer.serializeToString(svg);
-    const svgBlob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = isMobile ? 1800 : 4600;
-      canvas.height = isMobile ? 1800 : 3600;
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#f5fff8";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-      const pngUrl = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = pngUrl;
-      a.download = "aknaweb_arbol.png";
-      a.click();
-    };
-    img.src = url;
-  };
-
-  const exportPDF = async () => {
-    const element = document.getElementById("tree-export-area");
-    if (!element) return;
-
-    const canvas = await html2canvas(element, {
-      backgroundColor: "#ffffff",
-      scale: 2,
-      useCORS: true,
-    });
-
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({
-      orientation: "landscape",
-      unit: "px",
-      format: [canvas.width, canvas.height],
-    });
-
-    pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
-    pdf.save(`${(treeName || "aknaweb_arbol").replace(/\s+/g, "_")}.pdf`);
-  };
-
-  const importData = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-
-    reader.onload = async () => {
-      try {
-        const parsed = JSON.parse(String(reader.result || "[]"));
-        if (!Array.isArray(parsed)) {
-          alert("El archivo no tiene formato válido.");
-          return;
-        }
-
-        commitPeopleChange(parsed);
-        setCollapsedIds([]);
-        setSelectedSearchId("");
-        setSearchText("");
-        setPersonPanelOpen(false);
-        setFamilyPanelOpen(false);
-        setForm(emptyPerson());
-
-        if (user && currentTreeId) {
-          await handleSaveTree(parsed);
-        }
-      } catch {
-        alert("No se pudo leer el archivo JSON.");
-      }
-    };
-
-    reader.readAsText(file);
-  };
-
-  const clearAll = async () => {
-    if (!window.confirm("Esto borrará todo el árbol actual. ¿Continuar?")) return;
-
-    commitPeopleChange([]);
-    setCollapsedIds([]);
-    setSelectedSearchId("");
-    setSearchText("");
-    setLastCreatedId("");
-    setPersonPanelOpen(false);
-    setFamilyPanelOpen(false);
-    setForm(emptyPerson());
-
-    if (user && currentTreeId) {
-      await handleSaveTree([]);
-    }
-  };
+  const patriarchName = autoLayout.patriarch?.name || "Sin patriarca";
 
   return (
-    <div style={pageStyle}>
-      <div
-        style={{
-          ...containerStyle,
-          padding: isMobile ? "12px" : "22px",
-          borderRadius: isMobile ? "18px" : "30px",
-        }}
-      >
-        <div style={heroStyle}>
-          <div style={brandWrapStyle}>
-            <div style={brandIconShellStyle}>
-              <CelticTreeLogo size={isMobile ? 54 : 78} />
-            </div>
-
-            <div>
-              <div style={brandKickerStyle}>Aknaweb</div>
-              <h1 style={{ ...titleStyle, fontSize: isMobile ? "26px" : "48px" }}>
-                Árbol Genealógico
-              </h1>
-            </div>
-          </div>
-
-          <div style={heroBadgeStyle}>
-            <div style={heroBadgeLabelStyle}>Estado</div>
-            <div style={heroBadgeValueStyle}>{cloudStatusText(cloudStatus)}</div>
+    <div className="ft-shell">
+      <header className="ft-topbar">
+        <div className="ft-brand">
+          <div className="ft-logo">R</div>
+          <div>
+            <div className="ft-title">Árbol Genealógico</div>
+            <div className="ft-subtitle">Espacio personal de {user?.email?.split("@")[0] || "usuario"}</div>
           </div>
         </div>
 
-        <div style={cloudPanelStyle}>
-          <div style={cloudPanelTopRowStyle}>
-            <div style={cloudPanelLeftStyle}>
-              <div style={cloudPanelTitleStyle}>Árbol actual</div>
-              <input
-                value={treeName}
-                onChange={(e) => {
-                  setTreeName(e.target.value);
-                  setHasUnsavedChanges(true);
-                  setCloudStatus("pending");
-                }}
-                placeholder="Nombre del árbol"
-                style={treeNameInputStyle}
-              />
-            </div>
+        <div className="ft-top-actions">
+          <button type="button" className="ft-btn ft-btn-light" onClick={() => (window.location.href = "/")}>Volver al inicio</button>
+          <button type="button" className="ft-btn ft-btn-danger">Cerrar sesión</button>
+        </div>
+      </header>
 
-            <div
-              style={{
-                ...cloudPanelRightStyle,
-                width: isMobile ? "100%" : "auto",
+      <section className="ft-toolbar">
+        <div className="ft-toolbar-left">
+          <input className="ft-search" placeholder="Buscar familiar" value={searchText} onChange={(e) => setSearchText(e.target.value)} />
+        </div>
+
+        <div className="ft-toolbar-right">
+          <input className="ft-tree-name" value={treeName} onChange={(e) => setTreeName(e.target.value)} />
+          <div className={`ft-status ${isSaving ? "is-saving" : ""}`}>{statusText}</div>
+          <button type="button" className="ft-btn ft-btn-primary" onClick={handleManualSave} disabled={isSaving}>
+            {isSaving ? "Guardando..." : "Guardar"}
+          </button>
+          {currentTreeId ? (
+            <button
+              type="button"
+              className="ft-btn ft-btn-light"
+              onClick={async () => {
+                if (!window.confirm("¿Eliminar este árbol?")) return;
+                try { await removeTree(currentTreeId); } catch {}
+                setCurrentTreeId("");
+                setPeople([]);
               }}
             >
-              <button
-                onClick={handleSaveTree}
-                style={secondaryButton}
-                disabled={!user || !currentTreeId}
-              >
-                Guardar nube
-              </button>
-
-              <button onClick={handleCreateTree} style={secondaryButton} disabled={!user}>
-                Nuevo árbol
-              </button>
-            </div>
-          </div>
-
-          <div style={treeListWrapStyle}>
-            <div style={treeListTitleStyle}>Mis árboles</div>
-
-            {!user ? (
-              <div style={treeListEmptyStyle}>Inicia sesión para crear y guardar varios árboles.</div>
-            ) : trees.length === 0 ? (
-              <div style={treeListEmptyStyle}>Todavía no tienes árboles en la nube.</div>
-            ) : (
-              <div style={treeListStyle}>
-                {trees.map((treeItem) => (
-                  <div
-                    key={treeItem.id}
-                    style={{
-                      ...treeListItemStyle,
-                      ...(currentTreeId === treeItem.id ? treeListItemActiveStyle : {}),
-                      flexDirection: isMobile ? "column" : "row",
-                      alignItems: isMobile ? "stretch" : "center",
-                    }}
-                  >
-                    <button onClick={() => handleOpenTree(treeItem.id)} style={treeOpenButtonStyle}>
-                      {treeItem.name || "Sin nombre"}
-                    </button>
-
-                    <button
-                      onClick={() => handleDeleteTree(treeItem.id)}
-                      style={treeDeleteButtonStyle}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={sharePanelStyle}>
-          <div style={sharePanelHeaderStyle}>
-            <div style={sharePanelTitleStyle}>Compartir y exportar</div>
-            <div style={sharePanelTextStyle}>
-              Administra el enlace público y las exportaciones del árbol actual.
-            </div>
-          </div>
-
-          <div style={sharePanelActionsStyle}>
-            {!isPublic ? (
-              <button
-                onClick={handleShareTree}
-                style={greenOutlineButton}
-                disabled={!user || !currentTreeId}
-              >
-                Compartir link
-              </button>
-            ) : (
-              <>
-                <button onClick={handleCopyPublicLink} style={secondaryButton}>
-                  Copiar link
-                </button>
-
-                <button onClick={handleUnshareTree} style={secondaryButton}>
-                  Quitar público
-                </button>
-              </>
-            )}
-
-            <button onClick={exportPNG} style={secondaryButton}>
-              PNG
-            </button>
-
-            <button onClick={exportPDF} style={greenOutlineButton}>
-              PDF
-            </button>
-
-            <button onClick={exportData} style={secondaryButton}>
-              JSON
-            </button>
-
-            <label style={secondaryButton}>
-              Importar JSON
-              <input
-                type="file"
-                accept="application/json"
-                onChange={importData}
-                style={{ display: "none" }}
-              />
-            </label>
-          </div>
-
-          {isPublic && publicSlug ? (
-            <div style={shareLinkBoxStyle}>
-              {`${window.location.origin}/public/${publicSlug}`}
-            </div>
-          ) : null}
-        </div>
-
-        <div
-          style={{
-            ...topBarStyle,
-            gridTemplateColumns: isMobile ? "1fr" : topBarStyle.gridTemplateColumns,
-          }}
-        >
-          <div style={selectorBlockStyle}>
-            <div style={selectorTitleStyle}>Patriarca / raíz principal</div>
-            <select
-              value={centerId}
-              onChange={(e) => {
-                const nextId = e.target.value;
-                setCenterId(nextId);
-                if (nextId && positions[nextId]) {
-                  centerOnNode(nextId, isMobile ? 0.95 : 0.94);
-                }
-              }}
-              style={selectorStyle}
-            >
-              {roots.length === 0 ? (
-                <option value="">No hay patriarcas todavía</option>
-              ) : (
-                roots.map((root) => (
-                  <option key={root.id} value={root.id}>
-                    {root.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-
-          <div style={searchBlockStyle}>
-            <div style={selectorTitleStyle}>Buscar familiar</div>
-            <div style={searchRowStyle}>
-              <input
-                type="text"
-                placeholder="Escribe un nombre"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                style={searchInputStyle}
-              />
-              <select
-                value={selectedSearchId}
-                onChange={(e) => {
-                  setSelectedSearchId(e.target.value);
-                  focusPerson(e.target.value);
-                }}
-                style={searchSelectStyle}
-              >
-                <option value="">Selecciona resultado</option>
-                {filteredPeople.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div
-            style={{
-              ...zoomBlockStyle,
-              justifyContent: isMobile ? "flex-start" : "center",
-            }}
-          >
-            <button onClick={handleUndo} style={secondaryButton} disabled={!historyPast.length}>
-              Deshacer
-            </button>
-            <button onClick={handleRedo} style={secondaryButton} disabled={!historyFuture.length}>
-              Rehacer
-            </button>
-            <button onClick={expandAll} style={secondaryButton}>
-              Expandir todo
-            </button>
-            <button onClick={() => setPersonPanelOpen(true)} style={secondaryButton}>
-              Abrir editor
-            </button>
-            <button onClick={clearAll} style={dangerButton}>
               Reiniciar
             </button>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="ft-share-panel">
+        <div className="ft-share-info">
+          <div className="ft-share-title">Compartir árbol</div>
+          <div className="ft-share-subtitle">Comparte por enlace o copia el link de este árbol familiar.</div>
+          <div className="ft-share-link" title={publicTreeUrl}>{publicTreeUrl}</div>
+        </div>
+        <div className="ft-share-actions">
+          <button type="button" className="ft-btn ft-btn-primary" onClick={handleShareTree}>Compartir</button>
+          <button type="button" className="ft-btn ft-btn-light" onClick={handleCopyTreeLink}>Copiar enlace</button>
+          <button type="button" className="ft-btn ft-btn-light" onClick={handleCreateImage}>Crear imagen</button>
+          <button type="button" className="ft-btn ft-btn-light" onClick={handleCreatePdf}>Crear PDF</button>
+        </div>
+      </section>
+
+      <section className="ft-info-band">
+        Flujo único desde el patriarca: <strong>{patriarchName}</strong>. Cada nueva pareja se mantiene en bloque y los descendientes siguen hacia abajo.
+      </section>
+
+      <div className={`ft-map-shell ${isFullscreen ? "is-fullscreen" : ""}`} ref={mapShellRef}>
+        <section className="ft-map-controls">
+          <div className="ft-map-controls-row">
+            <button type="button" className="ft-btn ft-btn-primary" onClick={() => openNewPerson()}>+ Agregar familiar</button>
+            <button type="button" className="ft-btn ft-btn-light" onClick={handleAutoCenter}>Centrar</button>
+            <button type="button" className="ft-btn ft-btn-light" onClick={handleShareTree}>Compartir</button>
+            <button type="button" className="ft-btn ft-btn-light ft-zoom-btn" onClick={() => setZoom((z) => Math.max(0.1, z - 0.1))}>−</button>
+            <div className="ft-zoom-chip">{Math.round(zoom * 100)}%</div>
+            <button type="button" className="ft-btn ft-btn-light ft-zoom-btn" onClick={() => setZoom((z) => Math.min(1, z + 0.1))}>+</button>
+            <button type="button" className="ft-btn ft-btn-light ft-fullscreen-btn" onClick={toggleMapFullscreen}>{isFullscreen ? "Salir pantalla completa" : "Pantalla completa"}</button>
+          </div>
+        </section>
+
+        <div className="ft-map-viewport" ref={viewportRef}>
+        <div className="ft-map-stage" style={{ width: autoLayout.width * zoom, height: autoLayout.height * zoom }}>
+          <div ref={exportRef} className="ft-map-transform" style={{ transform: `scale(${zoom})`, transformOrigin: "top left", width: autoLayout.width, height: autoLayout.height }}>
+            <svg className="ft-lines" width={autoLayout.width} height={autoLayout.height}>
+              {autoLayout.edges.map((edge, index) => (
+                <path key={index} d={edgePath(edge)} className={`ft-line-path ${edge.type === "couple" ? "is-couple" : ""}`} />
+              ))}
+            </svg>
+
+            {people.map((person) => {
+              const layout = cards[person.id];
+              if (!layout) return null;
+              const highlighted = searchLower ? (person.name || "").toLowerCase().includes(searchLower) : false;
+              return (
+                <PersonCard
+                  key={person.id}
+                  person={person}
+                  layout={layout}
+                  activeProfileId={activeProfileId}
+                  setActiveProfileId={setActiveProfileId}
+                  onQuickAddChild={handleQuickAddChild}
+                  highlighted={highlighted}
+                />
+              );
+            })}
+
+            {activeProfileId ? (
+              <ProfilePopover
+                person={getPersonById(people, activeProfileId)}
+                people={people}
+                layout={activeLayout}
+                onEditPerson={handleEditPerson}
+                onDeletePerson={handleDeletePerson}
+                onQuickAddChild={handleQuickAddChild}
+                onQuickAddPartner={handleQuickAddPartner}
+                onClose={() => setActiveProfileId("")}
+              />
+            ) : null}
           </div>
         </div>
-
-        <div id="tree-export-area">
-          {people.length === 0 ? (
-            <div style={emptyStyle}>Todavía no hay familiares agregados.</div>
-          ) : !centerId || !tree || !layout ? (
-            <div style={emptyStyle}>Asigna al menos un patriarca sin padres para iniciar el flujo.</div>
-          ) : (
-            <div
-              ref={viewportRef}
-              style={{
-                ...treeViewportStyle,
-                ...(isFullscreen ? fullscreenViewportStyle : {}),
-                height: isFullscreen ? "100vh" : isMobile ? "74vh" : "78vh",
-              }}
-            >
-              <div
-                style={{
-                  ...mapFloatingControlsStyle,
-                  top: isMobile ? "12px" : "16px",
-                  right: isMobile ? "12px" : "16px",
-                  gap: isMobile ? "8px" : "10px",
-                }}
-              >
-                <button
-                  onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.05).toFixed(2)))}
-                  style={mapFabButtonStyle}
-                  title="Alejar"
-                >
-                  −
-                </button>
-
-                <div style={mapZoomBadgeStyle}>{Math.round(zoom * 100)}%</div>
-
-                <button
-                  onClick={() => setZoom((z) => Math.min(1.8, +(z + 0.05).toFixed(2)))}
-                  style={mapFabButtonStyle}
-                  title="Acercar"
-                >
-                  +
-                </button>
-
-                <button
-                  onClick={() => {
-                    const targetId = centerId || roots[0]?.id;
-                    setZoom(isMobile ? 0.95 : 0.94);
-
-                    if (targetId && positions[targetId]) {
-                      centerOnNode(targetId);
-                    } else {
-                      setPan({ x: 0, y: 0 });
-                    }
-                  }}
-                  style={mapFabWideButtonStyle}
-                  title="Centrar"
-                >
-                  Centrar
-                </button>
-
-                <button onClick={fitTree} style={mapFabWideButtonStyle} title="Autoajustar">
-                  Ajustar
-                </button>
-
-                {lastCreatedId ? (
-                  <button
-                    onClick={() => {
-                      if (!lastCreatedId || !positions[lastCreatedId]) return;
-                      setSelectedSearchId(lastCreatedId);
-                      centerOnNode(lastCreatedId, isMobile ? 1.08 : 1);
-                    }}
-                    style={mapFabWideButtonStyle}
-                    title="Ver último"
-                  >
-                    Ver último
-                  </button>
-                ) : null}
-
-                <button
-                  onClick={toggleFullscreen}
-                  style={mapFabPrimaryButtonStyle}
-                  title="Pantalla completa"
-                >
-                  {isFullscreen ? "Salir" : "Pantalla"}
-                </button>
-              </div>
-
-              <div
-                style={{
-                  ...treeCanvasWrapStyle,
-                  minWidth: isMobile ? "1800px" : "4600px",
-                  minHeight: isMobile ? "1800px" : "3600px",
-                  cursor: dragging ? "grabbing" : "grab",
-                  touchAction: "none",
-                }}
-                onPointerDown={onPointerDown}
-                onTouchStart={onTouchStart}
-              >
-                <svg
-                  id="family-tree-svg"
-                  width={isMobile ? "1800" : "4600"}
-                  height={isMobile ? "1800" : "3600"}
-                  style={{
-                    ...svgStyle,
-                    width: isMobile ? "1800px" : "4600px",
-                    height: isMobile ? "1800px" : "3600px",
-                  }}
-                >
-                  <defs>
-                    <linearGradient id="treeBgGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#fbfffc" />
-                      <stop offset="100%" stopColor="#eef8f1" />
-                    </linearGradient>
-                    <radialGradient id="treeGlow" cx="50%" cy="0%" r="85%">
-                      <stop offset="0%" stopColor="#f4fff7" />
-                      <stop offset="100%" stopColor="#eef7f1" />
-                    </radialGradient>
-                  </defs>
-
-                  <rect x="0" y="0" width="100%" height="100%" fill="url(#treeGlow)" />
-                  <rect
-                    x="0"
-                    y="0"
-                    width="100%"
-                    height="100%"
-                    fill="url(#treeBgGradient)"
-                    opacity="0.55"
-                  />
-
-                  <g
-                    transform={`translate(${isMobile ? 900 : 2300} ${isMobile ? 140 : 150}) translate(${pan.x} ${pan.y}) scale(${zoom})`}
-                  >
-                    {layout.edges.map((edge, idx) => {
-                      const parentPos = positions[edge.from];
-                      const childPos = positions[edge.to];
-                      if (!parentPos || !childPos) return null;
-
-                      const parentBottom = parentPos.y + (isMobile ? 250 : 520);
-                      const childTop = childPos.y;
-
-                      return (
-                        <path
-                          key={idx}
-                          d={curvePath(parentPos.x, parentBottom, childPos.x, childTop)}
-                          fill="none"
-                          stroke="#63a877"
-                          strokeWidth={isMobile ? "3.5" : "5"}
-                          strokeLinecap="round"
-                          opacity="0.96"
-                        />
-                      );
-                    })}
-
-                    {layout.nodes.map((node) => {
-                      const pos = positions[node.id];
-                      if (!pos) return null;
-
-                      return (
-                        <FamilyBlock
-                          key={node.id}
-                          node={node}
-                          x={pos.x}
-                          y={pos.y}
-                          root={pos.y === 0}
-                          onEdit={openPersonEditor}
-                          onDelete={deletePerson}
-                          onQuickAddPartner={quickAddPartner}
-                          onQuickAddChild={quickAddChild}
-                          onToggleCollapse={toggleCollapse}
-                          onOpenFamily={openFamilyEditor}
-                          highlightedId={selectedSearchId}
-                          isMobile={isMobile}
-                        />
-                      );
-                    })}
-                  </g>
-                </svg>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      <PersonEditorPanel
-        open={personPanelOpen}
-        people={people}
+      {saveToast ? (
+        <div className={`ft-save-toast is-${saveTone}`}>{saveToast}</div>
+      ) : null}
+
+      <PersonModal
+        open={personModalOpen}
         form={form}
         setForm={setForm}
-        onSave={savePerson}
-        onClose={() => setPersonPanelOpen(false)}
-        onDeleteCurrent={() => deletePerson(form.id)}
-        onImage={handleImage}
-        isMobile={isMobile}
-      />
-
-      <FamilyPanel
-        open={familyPanelOpen}
-        node={selectedFamilyNode}
         people={people}
-        onClose={() => setFamilyPanelOpen(false)}
-        onEditPerson={(person) => {
-          setFamilyPanelOpen(false);
-          openPersonEditor(person);
-        }}
-        onQuickAddChild={quickAddChild}
-        onQuickAddPartner={quickAddPartner}
-        isMobile={isMobile}
+        onClose={() => setPersonModalOpen(false)}
+        onSave={handleSavePerson}
+        onDeleteCurrent={() => handleDeletePerson(form.id)}
       />
     </div>
   );
 }
-
-const pageStyle = {
-  minHeight: "100vh",
-  background: "radial-gradient(circle at top, #f8fff9 0%, #eefcf2 55%, #ecfaf0 100%)",
-  padding: "16px",
-  fontFamily: "Arial, sans-serif",
-};
-
-const containerStyle = {
-  maxWidth: "1860px",
-  margin: "0 auto",
-  background: "rgba(255,255,255,0.95)",
-  backdropFilter: "blur(12px)",
-  borderRadius: "30px",
-  padding: "22px",
-  boxShadow: "0 20px 48px rgba(32, 94, 53, 0.11)",
-  border: "1px solid #d8efe0",
-};
-
-const heroStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "16px",
-  flexWrap: "wrap",
-  marginBottom: "16px",
-};
-
-const brandWrapStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "16px",
-  flexWrap: "wrap",
-};
-
-const brandIconShellStyle = {
-  width: "96px",
-  height: "96px",
-  borderRadius: "28px",
-  background: "radial-gradient(circle at top, #ffffff 0%, #f2fff6 45%, #e9f8ee 100%)",
-  border: "1px solid #d7eedf",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  boxShadow: "0 16px 30px rgba(22, 101, 52, 0.10), inset 0 1px 0 rgba(255,255,255,0.75)",
-};
-
-const brandKickerStyle = {
-  fontSize: "13px",
-  fontWeight: "800",
-  letterSpacing: "0.12em",
-  textTransform: "uppercase",
-  color: "#2e7d4f",
-  marginBottom: "6px",
-};
-
-const heroBadgeStyle = {
-  padding: "14px 16px",
-  borderRadius: "18px",
-  background: "linear-gradient(180deg, #f2fff6 0%, #e7f9ec 100%)",
-  border: "1px solid #cce9d5",
-  minWidth: "140px",
-  boxShadow: "0 10px 22px rgba(22, 101, 52, 0.06)",
-};
-
-const heroBadgeLabelStyle = {
-  fontSize: "12px",
-  fontWeight: "700",
-  color: "#4b7b57",
-};
-
-const heroBadgeValueStyle = {
-  marginTop: "6px",
-  fontSize: "16px",
-  fontWeight: "800",
-  color: "#166534",
-};
-
-const titleStyle = {
-  margin: 0,
-  textAlign: "left",
-  color: "#184f2a",
-  fontSize: "48px",
-  letterSpacing: "-0.02em",
-};
-
-const cloudPanelStyle = {
-  marginTop: "10px",
-  marginBottom: "14px",
-  padding: "16px",
-  borderRadius: "22px",
-  background: "linear-gradient(180deg, #fbfffc 0%, #f5fff8 100%)",
-  border: "1px solid #d8efe0",
-  boxShadow: "0 8px 22px rgba(22, 101, 52, 0.05)",
-};
-
-const cloudPanelTopRowStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: "14px",
-  flexWrap: "wrap",
-  alignItems: "flex-end",
-};
-
-const cloudPanelLeftStyle = {
-  flex: "1 1 320px",
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
-};
-
-const cloudPanelRightStyle = {
-  display: "flex",
-  gap: "10px",
-  flexWrap: "wrap",
-  alignItems: "center",
-};
-
-const cloudPanelTitleStyle = {
-  fontSize: "14px",
-  fontWeight: "800",
-  color: "#215a34",
-};
-
-const treeNameInputStyle = {
-  width: "100%",
-  padding: "13px 14px",
-  borderRadius: "14px",
-  border: "1.5px solid #cfe7d6",
-  background: "#ffffff",
-  fontSize: "15px",
-  color: "#12321f",
-  boxSizing: "border-box",
-  outline: "none",
-  boxShadow: "inset 0 1px 2px rgba(0,0,0,0.03)",
-};
-
-const treeListWrapStyle = {
-  marginTop: "16px",
-};
-
-const treeListTitleStyle = {
-  fontSize: "14px",
-  fontWeight: "800",
-  color: "#215a34",
-  marginBottom: "10px",
-};
-
-const treeListStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
-};
-
-const treeListItemStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "10px",
-  padding: "10px",
-  borderRadius: "14px",
-  background: "#f5fbf6",
-  border: "1px solid #d8efe0",
-};
-
-const treeListItemActiveStyle = {
-  background: "#eaf9ee",
-  border: "1px solid #9fd1ad",
-  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.05)",
-};
-
-const treeOpenButtonStyle = {
-  flex: 1,
-  textAlign: "left",
-  padding: "11px 12px",
-  borderRadius: "12px",
-  border: "1px solid #cfe7d6",
-  background: "#fff",
-  color: "#12321f",
-  cursor: "pointer",
-  fontWeight: "700",
-  fontSize: "14px",
-};
-
-const treeDeleteButtonStyle = {
-  padding: "11px 12px",
-  borderRadius: "12px",
-  border: "none",
-  background: "#d83c3c",
-  color: "#fff",
-  cursor: "pointer",
-  fontWeight: "700",
-  fontSize: "13px",
-};
-
-const treeListEmptyStyle = {
-  padding: "14px",
-  borderRadius: "14px",
-  background: "#f5fbf6",
-  border: "1px dashed #cfe7d6",
-  color: "#62806c",
-  fontSize: "14px",
-  marginTop: "10px",
-  wordBreak: "break-all",
-};
-
-const sharePanelStyle = {
-  marginTop: "16px",
-  marginBottom: "16px",
-  padding: "18px",
-  borderRadius: "22px",
-  background: "linear-gradient(180deg, #ffffff 0%, #f7fff9 100%)",
-  border: "1px solid #d8efe0",
-  boxShadow: "0 10px 24px rgba(22, 101, 52, 0.05)",
-};
-
-const sharePanelHeaderStyle = {
-  marginBottom: "14px",
-};
-
-const sharePanelTitleStyle = {
-  fontSize: "16px",
-  fontWeight: "800",
-  color: "#184f2a",
-};
-
-const sharePanelTextStyle = {
-  marginTop: "6px",
-  fontSize: "14px",
-  color: "#64806f",
-  lineHeight: 1.5,
-};
-
-const sharePanelActionsStyle = {
-  display: "flex",
-  gap: "10px",
-  flexWrap: "wrap",
-  alignItems: "center",
-};
-
-const shareLinkBoxStyle = {
-  marginTop: "14px",
-  padding: "12px 14px",
-  borderRadius: "14px",
-  background: "#f5fbf6",
-  border: "1px dashed #cfe7d6",
-  color: "#456555",
-  fontSize: "14px",
-  wordBreak: "break-all",
-};
-
-const topBarStyle = {
-  marginTop: "18px",
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-  gap: "14px",
-};
-
-const selectorBlockStyle = {
-  padding: "16px",
-  borderRadius: "18px",
-  background: "linear-gradient(180deg, #effcf2 0%, #f6fff8 100%)",
-  border: "1px solid #cfe7d6",
-  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.04)",
-};
-
-const searchBlockStyle = {
-  padding: "16px",
-  borderRadius: "18px",
-  background: "linear-gradient(180deg, #fbfffc 0%, #f5fff8 100%)",
-  border: "1px solid #d8efe0",
-  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.04)",
-};
-
-const selectorTitleStyle = {
-  fontSize: "14px",
-  fontWeight: "700",
-  color: "#215a34",
-  marginBottom: "8px",
-};
-
-const selectorStyle = {
-  width: "100%",
-  minWidth: "220px",
-  padding: "12px 14px",
-  borderRadius: "12px",
-  border: "1.5px solid #b7dcc2",
-  background: "#ffffff",
-  fontSize: "15px",
-  color: "#12321f",
-};
-
-const searchRowStyle = {
-  display: "flex",
-  gap: "8px",
-  flexDirection: "column",
-};
-
-const searchInputStyle = {
-  width: "100%",
-  padding: "12px 14px",
-  borderRadius: "12px",
-  border: "1.5px solid #cfe7d6",
-  background: "#fff",
-  fontSize: "15px",
-  color: "#12321f",
-};
-
-const searchSelectStyle = {
-  width: "100%",
-  padding: "12px 14px",
-  borderRadius: "12px",
-  border: "1.5px solid #cfe7d6",
-  background: "#fff",
-  fontSize: "15px",
-  color: "#12321f",
-};
-
-const zoomBlockStyle = {
-  padding: "16px",
-  borderRadius: "20px",
-  background: "linear-gradient(180deg, #ffffff 0%, #f5fff8 100%)",
-  border: "1px solid #d8efe0",
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  flexWrap: "wrap",
-  justifyContent: "center",
-  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.05)",
-};
-
-const emptyStyle = {
-  padding: "26px",
-  border: "2px dashed #cfe7d6",
-  borderRadius: "18px",
-  textAlign: "center",
-  color: "#62806c",
-  marginTop: "20px",
-  fontSize: "18px",
-  background: "#fbfffc",
-};
-
-const treeViewportStyle = {
-  marginTop: "24px",
-  borderRadius: "28px",
-  background: "radial-gradient(circle at top, #fcfffd 0%, #f3fbf5 55%, #edf8ef 100%)",
-  border: "1px solid #d8efe0",
-  overflow: "hidden",
-  height: "78vh",
-  boxShadow:
-    "inset 0 0 0 1px rgba(214,239,222,0.2), 0 18px 40px rgba(22, 101, 52, 0.08)",
-  position: "relative",
-  touchAction: "none",
-};
-
-const fullscreenViewportStyle = {
-  borderRadius: "0",
-  marginTop: "0",
-  background: "radial-gradient(circle at top, #fbfffc 0%, #f2faf4 58%, #edf8ef 100%)",
-};
-
-const mapFloatingControlsStyle = {
-  position: "absolute",
-  zIndex: 25,
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "stretch",
-  background: "rgba(255,255,255,0.88)",
-  backdropFilter: "blur(10px)",
-  border: "1px solid #d9efe1",
-  borderRadius: "18px",
-  padding: "10px",
-  boxShadow: "0 18px 34px rgba(22, 101, 52, 0.12)",
-};
-
-const mapFabButtonStyle = {
-  minWidth: "48px",
-  height: "44px",
-  borderRadius: "12px",
-  border: "1px solid #d5eadc",
-  background: "#ffffff",
-  color: "#143523",
-  fontWeight: "900",
-  fontSize: "22px",
-  cursor: "pointer",
-  boxShadow: "0 6px 16px rgba(22, 101, 52, 0.05)",
-};
-
-const mapFabWideButtonStyle = {
-  minWidth: "96px",
-  height: "42px",
-  borderRadius: "12px",
-  border: "1px solid #d5eadc",
-  background: "#ffffff",
-  color: "#143523",
-  fontWeight: "800",
-  fontSize: "13px",
-  cursor: "pointer",
-  boxShadow: "0 6px 16px rgba(22, 101, 52, 0.05)",
-};
-
-const mapFabPrimaryButtonStyle = {
-  minWidth: "96px",
-  height: "42px",
-  borderRadius: "12px",
-  border: "1px solid #97d5aa",
-  background: "linear-gradient(180deg, #2ecc71 0%, #1f8f4d 100%)",
-  color: "#fff",
-  fontWeight: "800",
-  fontSize: "13px",
-  cursor: "pointer",
-  boxShadow: "0 10px 20px rgba(34, 197, 94, 0.20)",
-};
-
-const mapZoomBadgeStyle = {
-  minWidth: "70px",
-  height: "38px",
-  borderRadius: "11px",
-  background: "#effaf2",
-  border: "1px solid #d8eee0",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#1b5b35",
-  fontWeight: "800",
-  fontSize: "13px",
-};
-
-const treeCanvasWrapStyle = {
-  minWidth: "4600px",
-  minHeight: "3600px",
-};
-
-const svgStyle = {
-  display: "block",
-  width: "4600px",
-  height: "3600px",
-  userSelect: "none",
-};
-
-const familyBlockStyle = {
-  width: "100%",
-  height: "100%",
-  overflow: "visible",
-  background: "linear-gradient(180deg, #ffffff 0%, #fbfffc 100%)",
-  border: "1px solid #dcefe3",
-  borderRadius: "28px",
-  boxSizing: "border-box",
-  padding: "18px",
-  boxShadow: "0 16px 34px rgba(32, 94, 53, 0.08)",
-};
-
-const familyBlockRootStyle = {
-  width: "100%",
-  height: "100%",
-  overflow: "visible",
-  background: "linear-gradient(180deg, #effcf2 0%, #fbfffc 100%)",
-  border: "2px solid #96d3a4",
-  borderRadius: "28px",
-  boxSizing: "border-box",
-  padding: "18px",
-  boxShadow: "0 18px 36px rgba(24, 79, 42, 0.12)",
-};
-
-const highlightedBlockStyle = {
-  boxShadow: "0 0 0 4px #dcfce7, 0 18px 34px rgba(24, 79, 42, 0.14)",
-  borderColor: "#75c28c",
-};
-
-const familyTopStripStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "10px",
-};
-
-const familyBadgeStyle = {
-  display: "inline-flex",
-  alignItems: "center",
-  padding: "6px 10px",
-  borderRadius: "999px",
-  background: "#ecfdf3",
-  color: "#166534",
-  fontWeight: "800",
-  letterSpacing: "0.01em",
-};
-
-const collapseButtonStyle = {
-  padding: "9px 12px",
-  borderRadius: "12px",
-  border: "1px solid #cfe7d6",
-  background: "#fff",
-  color: "#2c5e42",
-  fontWeight: "700",
-  fontSize: "12px",
-  cursor: "pointer",
-};
-
-const familyPeopleRowStyle = {
-  display: "flex",
-  gap: "18px",
-  alignItems: "stretch",
-  justifyContent: "center",
-};
-
-const familyPeopleSingleStyle = {
-  display: "flex",
-  justifyContent: "center",
-};
-
-const partnerCenterLinkWrapStyle = {
-  width: "26px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const partnerPillWrapStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: "100%",
-  height: "100%",
-};
-
-const partnerCenterLinkStyle = {
-  width: "24px",
-  height: "5px",
-  borderRadius: "999px",
-  background: "linear-gradient(90deg, #4f9d64 0%, #7dc790 100%)",
-};
-
-const familyBottomMetaStyle = {
-  display: "flex",
-  justifyContent: "center",
-  gap: "8px",
-  flexWrap: "wrap",
-  marginTop: "14px",
-};
-
-const metaChipStyle = {
-  padding: "8px 12px",
-  borderRadius: "999px",
-  background: "#eef8f1",
-  color: "#2f5d42",
-  fontSize: "12px",
-  fontWeight: "700",
-};
-
-const metaChipBlueStyle = {
-  padding: "8px 12px",
-  borderRadius: "999px",
-  background: "#ecfdf3",
-  color: "#16713d",
-  fontSize: "12px",
-  fontWeight: "700",
-};
-
-const familyBottomActionsStyle = {
-  display: "flex",
-  gap: "10px",
-  justifyContent: "center",
-  marginTop: "16px",
-};
-
-const personMiniStyle = {
-  width: "220px",
-  minHeight: "345px",
-  background: "#fff",
-  border: "1px solid #e3f0e7",
-  borderRadius: "22px",
-  padding: "14px",
-  boxSizing: "border-box",
-  boxShadow: "0 10px 20px rgba(32, 94, 53, 0.05)",
-};
-
-const personMiniImageWrapStyle = {
-  width: "100%",
-  height: "132px",
-  borderRadius: "16px",
-  overflow: "hidden",
-  background: "#eef8f1",
-  marginBottom: "12px",
-};
-
-const personMiniNameStyle = {
-  fontSize: "16px",
-  fontWeight: "800",
-  color: "#12321f",
-  textAlign: "center",
-  lineHeight: 1.15,
-  minHeight: "42px",
-  marginBottom: "10px",
-};
-
-const personMiniInfoStyle = {
-  minHeight: "72px",
-  borderRadius: "14px",
-  background: "#f6fbf7",
-  padding: "9px",
-  fontSize: "11px",
-  lineHeight: 1.35,
-  color: "#365947",
-  textAlign: "center",
-  marginBottom: "12px",
-};
-
-const personMiniNotesStyle = {
-  borderRadius: "10px",
-  background: "#f7fcf8",
-  color: "#567262",
-  lineHeight: 1.3,
-  textAlign: "center",
-};
-
-const personMiniButtonsStyle = {
-  display: "flex",
-  gap: "8px",
-  marginBottom: "8px",
-};
-
-const imageStyle = {
-  width: "100%",
-  height: "100%",
-  objectFit: "cover",
-};
-
-const imagePlaceholderStyle = {
-  width: "100%",
-  height: "100%",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#8aa19a",
-  fontWeight: "700",
-  fontSize: "12px",
-  background: "linear-gradient(180deg, #f2fbf4 0%, #e7f5ea 100%)",
-};
-
-const editButtonStyle = {
-  flex: 1,
-  padding: "11px 10px",
-  borderRadius: "12px",
-  border: "none",
-  background: "#2f7f53",
-  color: "#fff",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const deleteButtonStyle = {
-  flex: 1,
-  padding: "11px 10px",
-  borderRadius: "12px",
-  border: "none",
-  background: "#d83c3c",
-  color: "#fff",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const softGreenButtonStyle = {
-  flex: 1,
-  padding: "11px 10px",
-  borderRadius: "12px",
-  border: "1px solid #9fd1ad",
-  background: "#effcf2",
-  color: "#166534",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const softBlueButtonStyle = {
-  flex: 1,
-  padding: "11px 10px",
-  borderRadius: "12px",
-  border: "1px solid #b8dbc4",
-  background: "#f5fff8",
-  color: "#215a34",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const primaryButton = {
-  padding: "13px 18px",
-  borderRadius: "14px",
-  border: "none",
-  background: "linear-gradient(180deg, #2d8b4f 0%, #1f6f3d 100%)",
-  color: "#fff",
-  cursor: "pointer",
-  fontWeight: "700",
-  fontSize: "13px",
-};
-
-const secondaryButton = {
-  padding: "11px 15px",
-  borderRadius: "13px",
-  border: "1px solid #cfe7d6",
-  background: "#fff",
-  color: "#12321f",
-  cursor: "pointer",
-  fontWeight: "700",
-  display: "inline-flex",
-  alignItems: "center",
-  fontSize: "13px",
-};
-
-const greenOutlineButton = {
-  padding: "11px 15px",
-  borderRadius: "13px",
-  border: "1px solid #9fd1ad",
-  background: "#effcf2",
-  color: "#166534",
-  cursor: "pointer",
-  fontWeight: "700",
-  display: "inline-flex",
-  alignItems: "center",
-  fontSize: "13px",
-};
-
-const dangerButton = {
-  padding: "12px 18px",
-  borderRadius: "13px",
-  border: "none",
-  background: "#d83c3c",
-  color: "#fff",
-  cursor: "pointer",
-  fontWeight: "700",
-  fontSize: "13px",
-};
-
-const familyActionButtonGreen = {
-  padding: "13px 18px",
-  borderRadius: "14px",
-  border: "none",
-  background: "linear-gradient(180deg, #2d8b4f 0%, #1f6f3d 100%)",
-  color: "#fff",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const familyActionButtonBlue = {
-  padding: "13px 18px",
-  borderRadius: "14px",
-  border: "1px solid #9fd1ad",
-  background: "#effcf2",
-  color: "#166534",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const familyActionButtonGray = {
-  padding: "13px 18px",
-  borderRadius: "14px",
-  border: "1px solid #cfe7d6",
-  background: "#fff",
-  color: "#2f5d42",
-  fontWeight: "700",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const overlayStyle = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(17, 54, 30, 0.18)",
-  display: "flex",
-  justifyContent: "flex-end",
-  zIndex: 1000,
-};
-
-const overlayCenterStyle = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(17, 54, 30, 0.18)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 1100,
-};
-
-const sidePanelStyle = {
-  width: "430px",
-  maxWidth: "100%",
-  height: "100%",
-  background: "#ffffff",
-  boxShadow: "-8px 0 30px rgba(32, 94, 53, 0.15)",
-  display: "flex",
-  flexDirection: "column",
-};
-
-const panelHeaderStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "18px 18px 12px",
-  borderBottom: "1px solid #e4f2e8",
-};
-
-const panelTitleStyle = {
-  fontSize: "20px",
-  fontWeight: "800",
-  color: "#12321f",
-};
-
-const panelCloseStyle = {
-  width: "36px",
-  height: "36px",
-  borderRadius: "10px",
-  border: "1px solid #cfe7d6",
-  background: "#fff",
-  cursor: "pointer",
-  fontWeight: "700",
-};
-
-const panelBodyStyle = {
-  padding: "18px",
-  overflowY: "auto",
-  display: "flex",
-  flexDirection: "column",
-  gap: "10px",
-};
-
-const labelStyle = {
-  fontSize: "14px",
-  fontWeight: "700",
-  color: "#214e34",
-};
-
-const inputStyle = {
-  padding: "13px 14px",
-  borderRadius: "13px",
-  border: "1.5px solid #cfe7d6",
-  background: "#ffffff",
-  fontSize: "15px",
-  color: "#12321f",
-  minHeight: "48px",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const fileInputStyle = {
-  padding: "10px 12px",
-  borderRadius: "13px",
-  border: "1.5px solid #cfe7d6",
-  background: "#ffffff",
-  fontSize: "14px",
-  color: "#12321f",
-  minHeight: "48px",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const textareaStyle = {
-  padding: "13px 14px",
-  borderRadius: "13px",
-  border: "1.5px solid #cfe7d6",
-  background: "#ffffff",
-  fontSize: "15px",
-  color: "#12321f",
-  minHeight: "120px",
-  resize: "vertical",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const previewImageStyle = {
-  width: "100%",
-  height: "100%",
-  objectFit: "cover",
-};
-
-const sidePreviewWrapStyle = {
-  width: "100%",
-  height: "180px",
-  borderRadius: "14px",
-  overflow: "hidden",
-  background: "#eef8f1",
-  border: "1px solid #d8efe0",
-};
-
-const sideButtonRowStyle = {
-  display: "flex",
-  gap: "10px",
-  marginTop: "10px",
-};
-
-const familyPanelStyle = {
-  width: "760px",
-  maxWidth: "96vw",
-  maxHeight: "90vh",
-  background: "#fff",
-  borderRadius: "24px",
-  boxShadow: "0 18px 40px rgba(32, 94, 53, 0.18)",
-  overflow: "hidden",
-};
-
-const familyPanelBodyStyle = {
-  padding: "18px",
-  display: "flex",
-  flexDirection: "column",
-  gap: "14px",
-  overflowY: "auto",
-  maxHeight: "calc(90vh - 72px)",
-};
-
-const familySectionStyle = {
-  border: "1px solid #d8efe0",
-  borderRadius: "16px",
-  padding: "14px",
-  background: "#f8fdf9",
-};
-
-const familySectionTitleStyle = {
-  fontSize: "15px",
-  fontWeight: "800",
-  color: "#214e34",
-  marginBottom: "10px",
-};
-
-const familyItemCardStyle = {
-  border: "1px solid #d8efe0",
-  borderRadius: "14px",
-  background: "#fff",
-  padding: "12px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "10px",
-};
-
-const familyItemNameStyle = {
-  fontWeight: "700",
-  color: "#12321f",
-};
-
-const childrenListStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "10px",
-  marginBottom: "12px",
-};
-
-const childRowStyle = {
-  border: "1px solid #d8efe0",
-  borderRadius: "14px",
-  background: "#fff",
-  padding: "10px 12px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "10px",
-};
-
-const childNameStyle = {
-  fontWeight: "700",
-  color: "#12321f",
-};
