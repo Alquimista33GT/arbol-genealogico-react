@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 import {
   createTree,
   getUserTrees,
@@ -8,8 +10,6 @@ import {
   makeTreePublic,
   makeTreePrivate,
 } from "./services/treeService";
-
-const STORAGE_KEY = "arbol_genealogico_pro_v1";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -94,7 +94,7 @@ function measureTree(node, level = 0, layout = { levels: [], nodes: [], edges: [
 
 function createPositions(layout, isMobile = false) {
   const positions = {};
-  const gapX = isMobile ? 250 : 580;
+  const gapX = isMobile ? 260 : 580;
   const gapY = isMobile ? 320 : 540;
 
   layout.levels.forEach((nodes, levelIndex) => {
@@ -114,8 +114,11 @@ function createPositions(layout, isMobile = false) {
 }
 
 function curvePath(x1, y1, x2, y2) {
-  const midY = y1 + (y2 - y1) * 0.45;
-  return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+  const midY = y1 + (y2 - y1) * 0.42;
+  return `M ${x1} ${y1}
+          C ${x1} ${midY},
+            ${x2} ${midY},
+            ${x2} ${y2}`;
 }
 
 function personSummary(person) {
@@ -135,11 +138,140 @@ function cloudStatusText(status) {
       return "Creado";
     case "shared":
       return "Compartido";
+    case "pending":
+      return "Pendiente";
     case "error":
       return "Error";
     default:
-      return "Local";
+      return "Listo";
   }
+}
+
+function CelticTreeLogo({ size = 74 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 160 160"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <defs>
+        <linearGradient id="aknaGradMain" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#4ade80" />
+          <stop offset="55%" stopColor="#22c55e" />
+          <stop offset="100%" stopColor="#166534" />
+        </linearGradient>
+
+        <linearGradient id="aknaGradSoft" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ecfdf3" />
+          <stop offset="100%" stopColor="#d1fae5" />
+        </linearGradient>
+
+        <filter id="aknaShadow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="6" stdDeviation="8" floodColor="#166534" floodOpacity="0.18" />
+        </filter>
+      </defs>
+
+      <circle cx="80" cy="80" r="71" fill="url(#aknaGradSoft)" opacity="0.55" />
+      <circle
+        cx="80"
+        cy="80"
+        r="67"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="5.5"
+        filter="url(#aknaShadow)"
+      />
+      <circle
+        cx="80"
+        cy="80"
+        r="52"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="3.5"
+        opacity="0.9"
+      />
+
+      <path
+        d="M80 26
+           C60 30, 46 46, 46 64
+           C46 78, 53 90, 67 98
+           C55 102, 47 112, 47 124
+           C47 134, 54 141, 64 141
+           C75 141, 80 132, 80 122
+           C80 132, 85 141, 96 141
+           C106 141, 113 134, 113 124
+           C113 112, 105 102, 93 98
+           C107 90, 114 78, 114 64
+           C114 46, 100 30, 80 26Z"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="5.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      <path
+        d="M80 42
+           C69 47, 61 58, 61 68
+           C61 79, 68 87, 80 92
+           C92 87, 99 79, 99 68
+           C99 58, 91 47, 80 42Z"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="4.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      <path d="M80 58 L80 132" stroke="url(#aknaGradMain)" strokeWidth="6" strokeLinecap="round" />
+
+      <path
+        d="M80 73
+           C70 72, 61 66, 55 57
+           M80 73
+           C90 72, 99 66, 105 57"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="4.5"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="M80 95
+           C69 95, 60 101, 55 111
+           M80 95
+           C91 95, 100 101, 105 111"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="4.5"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="M61 43
+           C65 36, 72 31, 80 29
+           C88 31, 95 36, 99 43"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="3.5"
+        strokeLinecap="round"
+        opacity="0.9"
+      />
+
+      <path
+        d="M58 118
+           C64 127, 72 132, 80 134
+           C88 132, 96 127, 102 118"
+        fill="none"
+        stroke="url(#aknaGradMain)"
+        strokeWidth="3.5"
+        strokeLinecap="round"
+        opacity="0.9"
+      />
+    </svg>
+  );
 }
 
 function PersonMini({
@@ -149,28 +281,25 @@ function PersonMini({
   onQuickAddPartner,
   onQuickAddChild,
   isMobile,
-  readOnly = false,
 }) {
   const details = personSummary(person);
-  const smallButtonStyle = {
-    padding: isMobile ? "7px 6px" : "11px 10px",
-    fontSize: isMobile ? "10px" : "13px",
-  };
+  const compact = isMobile;
 
   return (
     <div
       xmlns="http://www.w3.org/1999/xhtml"
       style={{
         ...personMiniStyle,
-        width: isMobile ? "130px" : "205px",
-        minHeight: isMobile ? "190px" : "290px",
-        padding: isMobile ? "8px" : "12px",
+        width: compact ? "136px" : "220px",
+        minHeight: compact ? "230px" : "345px",
+        padding: compact ? "8px" : "14px",
       }}
     >
       <div
         style={{
           ...personMiniImageWrapStyle,
-          height: isMobile ? "58px" : "96px",
+          height: compact ? "84px" : "132px",
+          marginBottom: compact ? "8px" : "12px",
         }}
       >
         {person.photo ? (
@@ -183,9 +312,9 @@ function PersonMini({
       <div
         style={{
           ...personMiniNameStyle,
-          fontSize: isMobile ? "11px" : "15px",
-          minHeight: isMobile ? "24px" : "38px",
-          marginBottom: isMobile ? "6px" : "10px",
+          fontSize: compact ? "11px" : "16px",
+          minHeight: compact ? "28px" : "42px",
+          marginBottom: compact ? "8px" : "10px",
         }}
       >
         {person.name}
@@ -194,50 +323,81 @@ function PersonMini({
       <div
         style={{
           ...personMiniInfoStyle,
-          minHeight: isMobile ? "40px" : "64px",
-          fontSize: isMobile ? "9px" : "11px",
-          marginBottom: isMobile ? "6px" : "10px",
-          padding: isMobile ? "6px" : "8px",
+          minHeight: compact ? "48px" : "72px",
+          fontSize: compact ? "9px" : "11px",
+          padding: compact ? "6px" : "9px",
+          marginBottom: compact ? "8px" : "12px",
         }}
       >
         {details.length > 0 ? (
           details.map((item, idx) => <div key={idx}>{item}</div>)
         ) : (
-          <div style={{ color: "#94a3b8" }}>Sin datos</div>
+          <div style={{ color: "#89a293" }}>Sin datos</div>
         )}
       </div>
 
-      {!readOnly ? (
-        <>
-          <div style={personMiniButtonsStyle}>
-            <button style={{ ...editButtonStyle, ...smallButtonStyle }} onClick={() => onEdit(person)}>
-              Editar
-            </button>
-            <button style={{ ...deleteButtonStyle, ...smallButtonStyle }} onClick={() => onDelete(person.id)}>
-              Eliminar
-            </button>
-          </div>
-
-          <div style={personMiniButtonsStyle}>
-            {!person.partnerId ? (
-              <button
-                style={{ ...softGreenButtonStyle, ...smallButtonStyle }}
-                onClick={() => onQuickAddPartner(person)}
-              >
-                + Pareja
-              </button>
-            ) : (
-              <div style={{ flex: 1 }} />
-            )}
-            <button
-              style={{ ...softBlueButtonStyle, ...smallButtonStyle }}
-              onClick={() => onQuickAddChild(person)}
-            >
-              + Hijo
-            </button>
-          </div>
-        </>
+      {person.notes ? (
+        <div
+          style={{
+            ...personMiniNotesStyle,
+            fontSize: compact ? "8px" : "10px",
+            padding: compact ? "5px 6px" : "7px 8px",
+            marginBottom: compact ? "8px" : "10px",
+          }}
+        >
+          {person.notes}
+        </div>
       ) : null}
+
+      <div style={{ ...personMiniButtonsStyle, gap: compact ? "6px" : "8px" }}>
+        <button
+          style={{
+            ...editButtonStyle,
+            padding: compact ? "7px 6px" : "11px 10px",
+            fontSize: compact ? "10px" : "13px",
+          }}
+          onClick={() => onEdit(person)}
+        >
+          Editar
+        </button>
+        <button
+          style={{
+            ...deleteButtonStyle,
+            padding: compact ? "7px 6px" : "11px 10px",
+            fontSize: compact ? "10px" : "13px",
+          }}
+          onClick={() => onDelete(person.id)}
+        >
+          Eliminar
+        </button>
+      </div>
+
+      <div style={{ ...personMiniButtonsStyle, gap: compact ? "6px" : "8px", marginBottom: 0 }}>
+        {!person.partnerId ? (
+          <button
+            style={{
+              ...softGreenButtonStyle,
+              padding: compact ? "7px 6px" : "11px 10px",
+              fontSize: compact ? "10px" : "13px",
+            }}
+            onClick={() => onQuickAddPartner(person)}
+          >
+            + Pareja
+          </button>
+        ) : (
+          <div style={{ flex: 1 }} />
+        )}
+        <button
+          style={{
+            ...softBlueButtonStyle,
+            padding: compact ? "7px 6px" : "11px 10px",
+            fontSize: compact ? "10px" : "13px",
+          }}
+          onClick={() => onQuickAddChild(person)}
+        >
+          + Hijo
+        </button>
+      </div>
     </div>
   );
 }
@@ -257,11 +417,12 @@ function FamilyBlock({
   isMobile,
 }) {
   const { person, partner, hiddenChildrenCount, collapsed } = node;
-  const w = isMobile ? (partner ? 320 : 170) : partner ? 540 : 290;
-  const h = isMobile ? (root ? 300 : 280) : root ? 460 : 440;
+  const compact = isMobile;
+  const w = compact ? (partner ? 334 : 162) : partner ? 585 : 308;
+  const h = compact ? (root ? 350 : 330) : root ? 530 : 500;
   const left = x - w / 2;
   const top = y;
-  const blockTitle = partner ? "Unidad familiar" : "Persona / núcleo";
+
   const isHighlighted =
     highlightedId && (highlightedId === person.id || highlightedId === partner?.id);
 
@@ -272,17 +433,20 @@ function FamilyBlock({
         style={{
           ...(root ? familyBlockRootStyle : familyBlockStyle),
           ...(isHighlighted ? highlightedBlockStyle : {}),
-          padding: isMobile ? "10px" : "16px",
+          padding: compact ? "10px" : "18px",
         }}
       >
-        <div style={{ ...familyHeaderRowStyle, marginBottom: isMobile ? "8px" : "14px" }}>
-          <div style={{ ...familyHeaderStyle, fontSize: isMobile ? "11px" : "15px" }}>{blockTitle}</div>
+        <div style={{ ...familyTopStripStyle, marginBottom: compact ? "8px" : "12px" }}>
+          <div style={{ ...familyBadgeStyle, fontSize: compact ? "10px" : "12px" }}>
+            {partner ? "Familia" : "Persona"}
+          </div>
+
           {hiddenChildrenCount > 0 ? (
             <button
               style={{
                 ...collapseButtonStyle,
-                padding: isMobile ? "6px 7px" : "9px 11px",
-                fontSize: isMobile ? "10px" : "12px",
+                padding: compact ? "6px 8px" : "9px 12px",
+                fontSize: compact ? "10px" : "12px",
               }}
               onClick={() => onToggleCollapse(person.id)}
             >
@@ -296,7 +460,7 @@ function FamilyBlock({
             partner
               ? {
                   ...familyPeopleRowStyle,
-                  gap: isMobile ? "8px" : "18px",
+                  gap: compact ? "8px" : "18px",
                 }
               : familyPeopleSingleStyle
           }
@@ -312,14 +476,16 @@ function FamilyBlock({
 
           {partner ? (
             <>
-              <div style={{ ...partnerCenterLinkWrapStyle, width: isMobile ? "16px" : "26px" }}>
-                <div
-                  style={{
-                    ...partnerCenterLinkStyle,
-                    width: isMobile ? "14px" : "24px",
-                    height: isMobile ? "4px" : "5px",
-                  }}
-                />
+              <div style={{ ...partnerCenterLinkWrapStyle, width: compact ? "16px" : "26px" }}>
+                <div style={partnerPillWrapStyle}>
+                  <div
+                    style={{
+                      ...partnerCenterLinkStyle,
+                      width: compact ? "14px" : "24px",
+                      height: compact ? "4px" : "5px",
+                    }}
+                  />
+                </div>
               </div>
 
               <PersonMini
@@ -334,22 +500,23 @@ function FamilyBlock({
           ) : null}
         </div>
 
-        <div style={{ ...familyBottomMetaStyle, marginTop: isMobile ? "8px" : "14px" }}>
+        <div style={{ ...familyBottomMetaStyle, marginTop: compact ? "10px" : "14px" }}>
           <span
             style={{
               ...metaChipStyle,
-              padding: isMobile ? "5px 8px" : "7px 12px",
-              fontSize: isMobile ? "10px" : "12px",
+              padding: compact ? "5px 8px" : "8px 12px",
+              fontSize: compact ? "10px" : "12px",
             }}
           >
             {hiddenChildrenCount} hijo{hiddenChildrenCount === 1 ? "" : "s"}
           </span>
+
           {partner ? (
             <span
               style={{
                 ...metaChipBlueStyle,
-                padding: isMobile ? "5px 8px" : "7px 12px",
-                fontSize: isMobile ? "10px" : "12px",
+                padding: compact ? "5px 8px" : "8px 12px",
+                fontSize: compact ? "10px" : "12px",
               }}
             >
               Pareja enlazada
@@ -360,42 +527,42 @@ function FamilyBlock({
         <div
           style={{
             ...familyBottomActionsStyle,
-            marginTop: isMobile ? "8px" : "14px",
-            gap: isMobile ? "6px" : "10px",
+            marginTop: compact ? "10px" : "16px",
+            gap: compact ? "6px" : "10px",
           }}
         >
           <button
             style={{
               ...familyActionButtonGreen,
-              padding: isMobile ? "8px 10px" : "13px 18px",
-              fontSize: isMobile ? "10px" : "13px",
+              padding: compact ? "8px 10px" : "13px 18px",
+              fontSize: compact ? "10px" : "13px",
             }}
             onClick={() => onQuickAddChild(person)}
           >
-            + Agregar hijo
+            + Hijo
           </button>
 
           {!partner ? (
             <button
               style={{
                 ...familyActionButtonBlue,
-                padding: isMobile ? "8px 10px" : "13px 18px",
-                fontSize: isMobile ? "10px" : "13px",
+                padding: compact ? "8px 10px" : "13px 18px",
+                fontSize: compact ? "10px" : "13px",
               }}
               onClick={() => onQuickAddPartner(person)}
             >
-              + Agregar pareja
+              + Pareja
             </button>
           ) : (
             <button
               style={{
                 ...familyActionButtonGray,
-                padding: isMobile ? "8px 10px" : "13px 18px",
-                fontSize: isMobile ? "10px" : "13px",
+                padding: compact ? "8px 10px" : "13px 18px",
+                fontSize: compact ? "10px" : "13px",
               }}
               onClick={() => onOpenFamily(node)}
             >
-              Editar familia
+              Ver familia
             </button>
           )}
         </div>
@@ -422,7 +589,8 @@ function PersonEditorPanel({
       <div
         style={{
           ...sidePanelStyle,
-          width: isMobile ? "100%" : "420px",
+          width: isMobile ? "100%" : "430px",
+          borderRadius: isMobile ? "0" : "0",
         }}
       >
         <div style={panelHeaderStyle}>
@@ -614,7 +782,10 @@ function FamilyPanel({
                 }}
               >
                 <div style={familyItemNameStyle}>No hay pareja registrada</div>
-                <button style={familyActionButtonBlue} onClick={() => onQuickAddPartner(node.person)}>
+                <button
+                  style={familyActionButtonBlue}
+                  onClick={() => onQuickAddPartner(node.person)}
+                >
                   + Agregar pareja
                 </button>
               </div>
@@ -658,22 +829,23 @@ export default function FamilyTreeApp({ user }) {
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 768 : false
   );
+
+  const viewportRef = useRef(null);
+  const dragRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [trees, setTrees] = useState([]);
   const [currentTreeId, setCurrentTreeId] = useState(null);
   const [treeName, setTreeName] = useState("Mi árbol familiar");
-  const [cloudStatus, setCloudStatus] = useState("local");
+  const [cloudStatus, setCloudStatus] = useState("loaded");
   const [isPublic, setIsPublic] = useState(false);
   const [publicSlug, setPublicSlug] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [didInitialCenter, setDidInitialCenter] = useState(false);
 
-  const [people, setPeople] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [people, setPeople] = useState([]);
+  const [historyPast, setHistoryPast] = useState([]);
+  const [historyFuture, setHistoryFuture] = useState([]);
 
   const [form, setForm] = useState(emptyPerson());
   const [collapsedIds, setCollapsedIds] = useState([]);
@@ -681,17 +853,80 @@ export default function FamilyTreeApp({ user }) {
   const [familyPanelOpen, setFamilyPanelOpen] = useState(false);
   const [selectedFamilyNode, setSelectedFamilyNode] = useState(null);
 
-  const collapsedSet = useMemo(() => new Set(collapsedIds), [collapsedIds]);
-  const roots = useMemo(() => getRoots(people), [people]);
-
   const [centerId, setCenterId] = useState("");
-  const [zoom, setZoom] = useState(isMobile ? 0.65 : 0.95);
+  const [zoom, setZoom] = useState(isMobile ? 0.95 : 0.94);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
-  const dragRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   const [searchText, setSearchText] = useState("");
   const [selectedSearchId, setSelectedSearchId] = useState("");
+  const [lastCreatedId, setLastCreatedId] = useState("");
+
+  const collapsedSet = useMemo(() => new Set(collapsedIds), [collapsedIds]);
+  const roots = useMemo(() => getRoots(people), [people]);
+
+  const filteredPeople = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    if (!q) return people.slice(0, 50);
+    return people.filter((p) => (p.name || "").toLowerCase().includes(q)).slice(0, 50);
+  }, [people, searchText]);
+
+  const tree = useMemo(() => {
+    if (!centerId) return null;
+    return buildTree(people, centerId, collapsedSet);
+  }, [people, centerId, collapsedSet]);
+
+  const layout = useMemo(() => {
+    if (!tree) return null;
+    return measureTree(tree);
+  }, [tree]);
+
+  const positions = useMemo(() => {
+    if (!layout) return {};
+    return createPositions(layout, isMobile);
+  }, [layout, isMobile]);
+
+  function centerOnNode(nodeId, zoomValue = null) {
+    if (!nodeId || !positions[nodeId]) return;
+    const pos = positions[nodeId];
+
+    setPan({
+      x: -pos.x,
+      y: -pos.y + (isMobile ? 220 : 150),
+    });
+
+    if (typeof zoomValue === "number") {
+      setZoom(zoomValue);
+    }
+  }
+
+  function commitPeopleChange(nextPeople) {
+    setHistoryPast((prev) => [...prev, people]);
+    setHistoryFuture([]);
+    setPeople(nextPeople);
+    setHasUnsavedChanges(true);
+    setCloudStatus("pending");
+  }
+
+  function handleUndo() {
+    if (!historyPast.length) return;
+    const previous = historyPast[historyPast.length - 1];
+    setHistoryPast((prev) => prev.slice(0, -1));
+    setHistoryFuture((prev) => [people, ...prev]);
+    setPeople(previous);
+    setHasUnsavedChanges(true);
+    setCloudStatus("pending");
+  }
+
+  function handleRedo() {
+    if (!historyFuture.length) return;
+    const next = historyFuture[0];
+    setHistoryFuture((prev) => prev.slice(1));
+    setHistoryPast((prev) => [...prev, people]);
+    setPeople(next);
+    setHasUnsavedChanges(true);
+    setCloudStatus("pending");
+  }
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -701,15 +936,32 @@ export default function FamilyTreeApp({ user }) {
 
   useEffect(() => {
     setZoom((prev) => {
-      if (isMobile && prev > 0.8) return 0.65;
-      if (!isMobile && prev < 0.7) return 0.95;
+      if (isMobile && prev < 0.9) return 0.95;
+      if (!isMobile && prev < 0.85) return 0.94;
       return prev;
     });
   }, [isMobile]);
 
   useEffect(() => {
     async function loadTrees() {
-      if (!user) return;
+      if (!user) {
+        setTrees([]);
+        setCurrentTreeId(null);
+        setTreeName("Mi árbol familiar");
+        setPeople([]);
+        setIsPublic(false);
+        setPublicSlug("");
+        setCloudStatus("loaded");
+        setHasUnsavedChanges(false);
+        setHistoryPast([]);
+        setHistoryFuture([]);
+        setCollapsedIds([]);
+        setCenterId("");
+        setSelectedSearchId("");
+        setLastCreatedId("");
+        setDidInitialCenter(false);
+        return;
+      }
 
       try {
         const list = await getUserTrees(user.uid);
@@ -724,6 +976,9 @@ export default function FamilyTreeApp({ user }) {
           setPublicSlug(firstTree.publicSlug || "");
           setCloudStatus("loaded");
           setHasUnsavedChanges(false);
+          setHistoryPast([]);
+          setHistoryFuture([]);
+          setDidInitialCenter(false);
         } else {
           const newTreeId = await createTree(user.uid, {
             name: "Mi árbol familiar",
@@ -739,6 +994,9 @@ export default function FamilyTreeApp({ user }) {
           setPublicSlug("");
           setCloudStatus("created");
           setHasUnsavedChanges(false);
+          setHistoryPast([]);
+          setHistoryFuture([]);
+          setDidInitialCenter(false);
         }
       } catch (error) {
         console.error("Error cargando árboles:", error);
@@ -750,14 +1008,11 @@ export default function FamilyTreeApp({ user }) {
   }, [user]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(people));
-  }, [people]);
-
-  useEffect(() => {
     if (!roots.length) {
       setCenterId("");
       return;
     }
+
     if (!roots.some((r) => r.id === centerId)) {
       setCenterId(roots[0].id);
     }
@@ -799,26 +1054,124 @@ export default function FamilyTreeApp({ user }) {
     return () => clearTimeout(timer);
   }, [user, currentTreeId, treeName, people, isPublic, publicSlug, hasUnsavedChanges]);
 
-  const filteredPeople = useMemo(() => {
-    const q = searchText.trim().toLowerCase();
-    if (!q) return people.slice(0, 50);
-    return people.filter((p) => (p.name || "").toLowerCase().includes(q)).slice(0, 50);
-  }, [people, searchText]);
+  useEffect(() => {
+    function onKeyDown(e) {
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+      if (!ctrlOrCmd) return;
 
-  const tree = useMemo(() => {
-    if (!centerId) return null;
-    return buildTree(people, centerId, collapsedSet);
-  }, [people, centerId, collapsedSet]);
+      if (e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
 
-  const layout = useMemo(() => {
-    if (!tree) return null;
-    return measureTree(tree);
-  }, [tree]);
+      if (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey)) {
+        e.preventDefault();
+        handleRedo();
+      }
+    }
 
-  const positions = useMemo(() => {
-    if (!layout) return {};
-    return createPositions(layout, isMobile);
-  }, [layout, isMobile]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [historyPast, historyFuture, people]);
+
+  useEffect(() => {
+    if (!centerId || !positions[centerId]) return;
+
+    if (!didInitialCenter) {
+      centerOnNode(centerId, isMobile ? 0.95 : 0.94);
+      setDidInitialCenter(true);
+    }
+  }, [centerId, positions, isMobile, didInitialCenter]);
+
+  useEffect(() => {
+    if (!selectedSearchId || !positions[selectedSearchId]) return;
+    if (!didInitialCenter) return;
+
+    centerOnNode(selectedSearchId, isMobile ? 1.08 : 1);
+  }, [selectedSearchId, positions, isMobile, didInitialCenter]);
+
+  function startDrag(clientX, clientY) {
+    setDragging(true);
+    dragRef.current = {
+      x: clientX,
+      y: clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+  }
+
+  function updateDrag(clientX, clientY) {
+    if (!dragging) return;
+
+    const dx = clientX - dragRef.current.x;
+    const dy = clientY - dragRef.current.y;
+
+    setPan({
+      x: dragRef.current.panX + dx,
+      y: dragRef.current.panY + dy,
+    });
+  }
+
+  function stopDrag() {
+    setDragging(false);
+  }
+
+  const onPointerDown = (e) => {
+    startDrag(e.clientX, e.clientY);
+  };
+
+  const onTouchStart = (e) => {
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    startDrag(touch.clientX, touch.clientY);
+  };
+
+  useEffect(() => {
+    const handlePointerMove = (e) => updateDrag(e.clientX, e.clientY);
+    const handlePointerUp = () => stopDrag();
+
+    const handleTouchMove = (e) => {
+      const touch = e.touches?.[0];
+      if (!touch) return;
+      if (dragging) e.preventDefault();
+      updateDrag(touch.clientX, touch.clientY);
+    };
+
+    const handleTouchEnd = () => stopDrag();
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
+    window.addEventListener("touchend", handleTouchEnd);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [dragging, pan]);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await viewportRef.current?.requestFullscreen?.();
+        setIsFullscreen(true);
+      } else {
+        await document.exitFullscreen?.();
+        setIsFullscreen(false);
+      }
+    } catch (error) {
+      console.error("Error con pantalla completa:", error);
+    }
+  };
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   async function refreshTrees(uid) {
     if (!uid) return;
@@ -848,10 +1201,16 @@ export default function FamilyTreeApp({ user }) {
       setSelectedSearchId("");
       setSearchText("");
       setCenterId("");
+      setLastCreatedId("");
       setIsPublic(false);
       setPublicSlug("");
       setCloudStatus("created");
       setHasUnsavedChanges(false);
+      setHistoryPast([]);
+      setHistoryFuture([]);
+      setPan({ x: 0, y: 0 });
+      setZoom(isMobile ? 0.95 : 0.94);
+      setDidInitialCenter(false);
     } catch (error) {
       console.error("Error creando árbol:", error);
       setCloudStatus("error");
@@ -874,11 +1233,17 @@ export default function FamilyTreeApp({ user }) {
       setSelectedSearchId("");
       setSearchText("");
       setCenterId("");
+      setLastCreatedId("");
       setPersonPanelOpen(false);
       setFamilyPanelOpen(false);
       setForm(emptyPerson());
       setCloudStatus("loaded");
       setHasUnsavedChanges(false);
+      setHistoryPast([]);
+      setHistoryFuture([]);
+      setPan({ x: 0, y: 0 });
+      setZoom(isMobile ? 0.95 : 0.94);
+      setDidInitialCenter(false);
     } catch (error) {
       console.error("Error abriendo árbol:", error);
       setCloudStatus("error");
@@ -944,11 +1309,15 @@ export default function FamilyTreeApp({ user }) {
       setSelectedSearchId("");
       setSearchText("");
       setCenterId("");
+      setLastCreatedId("");
       setPersonPanelOpen(false);
       setFamilyPanelOpen(false);
       setForm(emptyPerson());
       setCloudStatus("saved");
       setHasUnsavedChanges(false);
+      setHistoryPast([]);
+      setHistoryFuture([]);
+      setDidInitialCenter(false);
     } catch (error) {
       console.error("Error eliminando árbol:", error);
       setCloudStatus("error");
@@ -972,7 +1341,7 @@ export default function FamilyTreeApp({ user }) {
 
       const link = `${window.location.origin}/public/${slug}`;
       await navigator.clipboard.writeText(link);
-      alert("Link copiado:\n" + link);
+      alert(`Link copiado:\n${link}`);
     } catch (error) {
       console.error("Error compartiendo árbol:", error);
       setCloudStatus("error");
@@ -1002,7 +1371,7 @@ export default function FamilyTreeApp({ user }) {
     try {
       const link = `${window.location.origin}/public/${publicSlug}`;
       await navigator.clipboard.writeText(link);
-      alert("Link copiado:\n" + link);
+      alert(`Link copiado:\n${link}`);
     } catch (error) {
       console.error(error);
       alert("No se pudo copiar el link");
@@ -1012,11 +1381,7 @@ export default function FamilyTreeApp({ user }) {
   const focusPerson = (personId) => {
     if (!personId || !positions[personId]) return;
     setSelectedSearchId(personId);
-    setPan({
-      x: -positions[personId].x,
-      y: -positions[personId].y + (isMobile ? 90 : 140),
-    });
-    setZoom(isMobile ? 0.9 : 1.05);
+    centerOnNode(personId, isMobile ? 1.08 : 1.05);
   };
 
   const savePerson = async () => {
@@ -1032,6 +1397,7 @@ export default function FamilyTreeApp({ user }) {
     }
 
     let nextPeople = [...people];
+    let createdPersonId = "";
 
     if (form.id) {
       nextPeople = nextPeople.map((p) =>
@@ -1050,6 +1416,8 @@ export default function FamilyTreeApp({ user }) {
         }
         return p;
       });
+
+      createdPersonId = form.id;
     } else {
       const newId = uid();
       const newPerson = {
@@ -1059,6 +1427,8 @@ export default function FamilyTreeApp({ user }) {
       };
 
       nextPeople.push(newPerson);
+      createdPersonId = newId;
+      setLastCreatedId(newId);
 
       if (form.partnerId) {
         nextPeople = nextPeople.map((p) =>
@@ -1067,11 +1437,19 @@ export default function FamilyTreeApp({ user }) {
       }
     }
 
-    setPeople(nextPeople);
+    commitPeopleChange(nextPeople);
+
+    const nextRoots = getRoots(nextPeople);
+    if (!centerId && nextRoots.length > 0) {
+      setCenterId(nextRoots[0].id);
+    }
+
+    if (createdPersonId) {
+      setSelectedSearchId(createdPersonId);
+    }
+
     setPersonPanelOpen(false);
     setForm(emptyPerson());
-    setHasUnsavedChanges(true);
-    setCloudStatus("local");
 
     if (user && currentTreeId) {
       await handleSaveTree(nextPeople);
@@ -1123,17 +1501,19 @@ export default function FamilyTreeApp({ user }) {
     );
   };
 
-  const collapseAll = () => {
-    setCollapsedIds(people.map((p) => p.id));
-  };
-
   const expandAll = () => {
     setCollapsedIds([]);
   };
 
   const fitTree = () => {
-    setZoom(isMobile ? 0.65 : 0.78);
-    setPan({ x: 0, y: 0 });
+    const targetId = centerId || roots[0]?.id;
+    setZoom(isMobile ? 0.95 : 0.84);
+
+    if (targetId && positions[targetId]) {
+      centerOnNode(targetId);
+    } else {
+      setPan({ x: 0, y: 0 });
+    }
   };
 
   const deletePerson = async (id) => {
@@ -1148,15 +1528,12 @@ export default function FamilyTreeApp({ user }) {
         parent2: p.parent2 === id ? "" : p.parent2,
       }));
 
-    setPeople(nextPeople);
+    commitPeopleChange(nextPeople);
 
     if (form.id === id) {
       setPersonPanelOpen(false);
       setForm(emptyPerson());
     }
-
-    setHasUnsavedChanges(true);
-    setCloudStatus("local");
 
     if (user && currentTreeId) {
       await handleSaveTree(nextPeople);
@@ -1183,7 +1560,7 @@ export default function FamilyTreeApp({ user }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "arbol_genealogico.json";
+    a.download = "aknaweb_arbol.json";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1200,20 +1577,41 @@ export default function FamilyTreeApp({ user }) {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = isMobile ? 2600 : 4600;
-      canvas.height = isMobile ? 2200 : 3600;
+      canvas.width = isMobile ? 1800 : 4600;
+      canvas.height = isMobile ? 1800 : 3600;
       const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#f8fafc";
+      ctx.fillStyle = "#f5fff8";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       const pngUrl = canvas.toDataURL("image/png");
       const a = document.createElement("a");
       a.href = pngUrl;
-      a.download = "arbol_genealogico.png";
+      a.download = "aknaweb_arbol.png";
       a.click();
     };
     img.src = url;
+  };
+
+  const exportPDF = async () => {
+    const element = document.getElementById("tree-export-area");
+    if (!element) return;
+
+    const canvas = await html2canvas(element, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF({
+      orientation: "landscape",
+      unit: "px",
+      format: [canvas.width, canvas.height],
+    });
+
+    pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+    pdf.save(`${(treeName || "aknaweb_arbol").replace(/\s+/g, "_")}.pdf`);
   };
 
   const importData = async (e) => {
@@ -1229,15 +1627,13 @@ export default function FamilyTreeApp({ user }) {
           return;
         }
 
-        setPeople(parsed);
+        commitPeopleChange(parsed);
         setCollapsedIds([]);
         setSelectedSearchId("");
         setSearchText("");
         setPersonPanelOpen(false);
         setFamilyPanelOpen(false);
         setForm(emptyPerson());
-        setHasUnsavedChanges(true);
-        setCloudStatus("local");
 
         if (user && currentTreeId) {
           await handleSaveTree(parsed);
@@ -1253,58 +1649,48 @@ export default function FamilyTreeApp({ user }) {
   const clearAll = async () => {
     if (!window.confirm("Esto borrará todo el árbol actual. ¿Continuar?")) return;
 
-    setPeople([]);
+    commitPeopleChange([]);
     setCollapsedIds([]);
     setSelectedSearchId("");
     setSearchText("");
+    setLastCreatedId("");
     setPersonPanelOpen(false);
     setFamilyPanelOpen(false);
     setForm(emptyPerson());
-    setHasUnsavedChanges(true);
-    setCloudStatus("local");
 
     if (user && currentTreeId) {
       await handleSaveTree([]);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
     }
   };
-
-  const onMouseDown = (e) => {
-    setDragging(true);
-    dragRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      panX: pan.x,
-      panY: pan.y,
-    };
-  };
-
-  const onMouseMove = (e) => {
-    if (!dragging) return;
-    const dx = e.clientX - dragRef.current.x;
-    const dy = e.clientY - dragRef.current.y;
-    setPan({
-      x: dragRef.current.panX + dx,
-      y: dragRef.current.panY + dy,
-    });
-  };
-
-  const onMouseUp = () => setDragging(false);
 
   return (
     <div style={pageStyle}>
       <div
         style={{
           ...containerStyle,
-          padding: isMobile ? "14px" : "22px",
-          borderRadius: isMobile ? "16px" : "24px",
+          padding: isMobile ? "12px" : "22px",
+          borderRadius: isMobile ? "18px" : "30px",
         }}
       >
-        <h1 style={{ ...titleStyle, fontSize: isMobile ? "28px" : "46px" }}>Árbol Genealógico</h1>
-        <p style={{ ...subtitleStyle, fontSize: isMobile ? "14px" : "18px" }}>
-          Versión completa con panel familiar, búsqueda, múltiples árboles y nube.
-        </p>
+        <div style={heroStyle}>
+          <div style={brandWrapStyle}>
+            <div style={brandIconShellStyle}>
+              <CelticTreeLogo size={isMobile ? 54 : 78} />
+            </div>
+
+            <div>
+              <div style={brandKickerStyle}>Aknaweb</div>
+              <h1 style={{ ...titleStyle, fontSize: isMobile ? "26px" : "48px" }}>
+                Árbol Genealógico
+              </h1>
+            </div>
+          </div>
+
+          <div style={heroBadgeStyle}>
+            <div style={heroBadgeLabelStyle}>Estado</div>
+            <div style={heroBadgeValueStyle}>{cloudStatusText(cloudStatus)}</div>
+          </div>
+        </div>
 
         <div style={cloudPanelStyle}>
           <div style={cloudPanelTopRowStyle}>
@@ -1315,7 +1701,7 @@ export default function FamilyTreeApp({ user }) {
                 onChange={(e) => {
                   setTreeName(e.target.value);
                   setHasUnsavedChanges(true);
-                  setCloudStatus("local");
+                  setCloudStatus("pending");
                 }}
                 placeholder="Nombre del árbol"
                 style={treeNameInputStyle}
@@ -1328,30 +1714,17 @@ export default function FamilyTreeApp({ user }) {
                 width: isMobile ? "100%" : "auto",
               }}
             >
-              <div style={cloudStatusStyle}>Estado: {cloudStatusText(cloudStatus)}</div>
-
-              <button onClick={handleSaveTree} style={secondaryButton} disabled={!user || !currentTreeId}>
+              <button
+                onClick={handleSaveTree}
+                style={secondaryButton}
+                disabled={!user || !currentTreeId}
+              >
                 Guardar nube
               </button>
 
               <button onClick={handleCreateTree} style={secondaryButton} disabled={!user}>
                 Nuevo árbol
               </button>
-
-              {!isPublic ? (
-                <button onClick={handleShareTree} style={secondaryButton} disabled={!user || !currentTreeId}>
-                  Compartir link
-                </button>
-              ) : (
-                <>
-                  <button onClick={handleCopyPublicLink} style={secondaryButton}>
-                    Copiar link
-                  </button>
-                  <button onClick={handleUnshareTree} style={secondaryButton}>
-                    Quitar público
-                  </button>
-                </>
-              )}
             </div>
           </div>
 
@@ -1378,20 +1751,76 @@ export default function FamilyTreeApp({ user }) {
                       {treeItem.name || "Sin nombre"}
                     </button>
 
-                    <button onClick={() => handleDeleteTree(treeItem.id)} style={treeDeleteButtonStyle}>
+                    <button
+                      onClick={() => handleDeleteTree(treeItem.id)}
+                      style={treeDeleteButtonStyle}
+                    >
                       Eliminar
                     </button>
                   </div>
                 ))}
               </div>
             )}
-
-            {isPublic && publicSlug ? (
-              <div style={treeListEmptyStyle}>
-                Link público: {`${window.location.origin}/public/${publicSlug}`}
-              </div>
-            ) : null}
           </div>
+        </div>
+
+        <div style={sharePanelStyle}>
+          <div style={sharePanelHeaderStyle}>
+            <div style={sharePanelTitleStyle}>Compartir y exportar</div>
+            <div style={sharePanelTextStyle}>
+              Administra el enlace público y las exportaciones del árbol actual.
+            </div>
+          </div>
+
+          <div style={sharePanelActionsStyle}>
+            {!isPublic ? (
+              <button
+                onClick={handleShareTree}
+                style={greenOutlineButton}
+                disabled={!user || !currentTreeId}
+              >
+                Compartir link
+              </button>
+            ) : (
+              <>
+                <button onClick={handleCopyPublicLink} style={secondaryButton}>
+                  Copiar link
+                </button>
+
+                <button onClick={handleUnshareTree} style={secondaryButton}>
+                  Quitar público
+                </button>
+              </>
+            )}
+
+            <button onClick={exportPNG} style={secondaryButton}>
+              PNG
+            </button>
+
+            <button onClick={exportPDF} style={greenOutlineButton}>
+              PDF
+            </button>
+
+            <button onClick={exportData} style={secondaryButton}>
+              JSON
+            </button>
+
+            <label style={secondaryButton}>
+              Importar JSON
+              <input
+                type="file"
+                accept="application/json"
+                onChange={importData}
+                style={{ display: "none" }}
+              />
+            </label>
+          </div>
+
+          {isPublic && publicSlug ? (
+            <div style={shareLinkBoxStyle}>
+              {`${window.location.origin}/public/${publicSlug}`}
+            </div>
+          ) : null}
         </div>
 
         <div
@@ -1404,7 +1833,13 @@ export default function FamilyTreeApp({ user }) {
             <div style={selectorTitleStyle}>Patriarca / raíz principal</div>
             <select
               value={centerId}
-              onChange={(e) => setCenterId(e.target.value)}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                setCenterId(nextId);
+                if (nextId && positions[nextId]) {
+                  centerOnNode(nextId, isMobile ? 0.95 : 0.94);
+                }
+              }}
               style={selectorStyle}
             >
               {roots.length === 0 ? (
@@ -1453,27 +1888,11 @@ export default function FamilyTreeApp({ user }) {
               justifyContent: isMobile ? "flex-start" : "center",
             }}
           >
-            <button onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.05).toFixed(2)))} style={secondaryButton}>
-              -
+            <button onClick={handleUndo} style={secondaryButton} disabled={!historyPast.length}>
+              Deshacer
             </button>
-            <div style={zoomLabelStyle}>Zoom {Math.round(zoom * 100)}%</div>
-            <button onClick={() => setZoom((z) => Math.min(1.8, +(z + 0.05).toFixed(2)))} style={secondaryButton}>
-              +
-            </button>
-            <button
-              onClick={() => {
-                setZoom(isMobile ? 0.65 : 0.95);
-                setPan({ x: 0, y: 0 });
-              }}
-              style={secondaryButton}
-            >
-              Centrar
-            </button>
-            <button onClick={fitTree} style={secondaryButton}>
-              Autoajustar
-            </button>
-            <button onClick={collapseAll} style={secondaryButton}>
-              Colapsar todo
+            <button onClick={handleRedo} style={secondaryButton} disabled={!historyFuture.length}>
+              Rehacer
             </button>
             <button onClick={expandAll} style={secondaryButton}>
               Expandir todo
@@ -1481,105 +1900,190 @@ export default function FamilyTreeApp({ user }) {
             <button onClick={() => setPersonPanelOpen(true)} style={secondaryButton}>
               Abrir editor
             </button>
-            <button onClick={exportPNG} style={secondaryButton}>
-              Exportar PNG
-            </button>
-            <button onClick={exportData} style={secondaryButton}>
-              Exportar JSON
-            </button>
-            <label style={secondaryButton}>
-              Importar JSON
-              <input type="file" accept="application/json" onChange={importData} style={{ display: "none" }} />
-            </label>
             <button onClick={clearAll} style={dangerButton}>
-              Reiniciar árbol actual
+              Reiniciar
             </button>
           </div>
         </div>
 
-        {people.length === 0 ? (
-          <div style={emptyStyle}>Todavía no hay familiares agregados.</div>
-        ) : !centerId || !tree || !layout ? (
-          <div style={emptyStyle}>Asigna al menos un patriarca sin padres para iniciar el flujo.</div>
-        ) : (
-          <div
-            style={{
-              ...treeViewportStyle,
-              height: isMobile ? "68vh" : "78vh",
-            }}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
-          >
+        <div id="tree-export-area">
+          {people.length === 0 ? (
+            <div style={emptyStyle}>Todavía no hay familiares agregados.</div>
+          ) : !centerId || !tree || !layout ? (
+            <div style={emptyStyle}>Asigna al menos un patriarca sin padres para iniciar el flujo.</div>
+          ) : (
             <div
+              ref={viewportRef}
               style={{
-                ...treeCanvasWrapStyle,
-                minWidth: isMobile ? "2200px" : "4600px",
-                minHeight: isMobile ? "2200px" : "3600px",
-                cursor: dragging ? "grabbing" : "grab",
+                ...treeViewportStyle,
+                ...(isFullscreen ? fullscreenViewportStyle : {}),
+                height: isFullscreen ? "100vh" : isMobile ? "74vh" : "78vh",
               }}
-              onMouseDown={onMouseDown}
             >
-              <svg
-                id="family-tree-svg"
-                width={isMobile ? "2200" : "4600"}
-                height={isMobile ? "2200" : "3600"}
+              <div
                 style={{
-                  ...svgStyle,
-                  width: isMobile ? "2200px" : "4600px",
-                  height: isMobile ? "2200px" : "3600px",
+                  ...mapFloatingControlsStyle,
+                  top: isMobile ? "12px" : "16px",
+                  right: isMobile ? "12px" : "16px",
+                  gap: isMobile ? "8px" : "10px",
                 }}
               >
-                <g
-                  transform={`translate(${isMobile ? 1100 : 2300} ${isMobile ? 100 : 150}) translate(${pan.x} ${pan.y}) scale(${zoom})`}
+                <button
+                  onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.05).toFixed(2)))}
+                  style={mapFabButtonStyle}
+                  title="Alejar"
                 >
-                  {layout.edges.map((edge, idx) => {
-                    const parentPos = positions[edge.from];
-                    const childPos = positions[edge.to];
-                    if (!parentPos || !childPos) return null;
+                  −
+                </button>
 
-                    const parentBottom = parentPos.y + (isMobile ? 220 : 500);
-                    const childTop = childPos.y;
+                <div style={mapZoomBadgeStyle}>{Math.round(zoom * 100)}%</div>
 
-                    return (
-                      <path
-                        key={idx}
-                        d={curvePath(parentPos.x, parentBottom, childPos.x, childTop)}
-                        fill="none"
-                        stroke="#94a3b8"
-                        strokeWidth={isMobile ? "3" : "5"}
-                        strokeLinecap="round"
-                      />
-                    );
-                  })}
+                <button
+                  onClick={() => setZoom((z) => Math.min(1.8, +(z + 0.05).toFixed(2)))}
+                  style={mapFabButtonStyle}
+                  title="Acercar"
+                >
+                  +
+                </button>
 
-                  {layout.nodes.map((node) => {
-                    const pos = positions[node.id];
-                    if (!pos) return null;
+                <button
+                  onClick={() => {
+                    const targetId = centerId || roots[0]?.id;
+                    setZoom(isMobile ? 0.95 : 0.94);
 
-                    return (
-                      <FamilyBlock
-                        key={node.id}
-                        node={node}
-                        x={pos.x}
-                        y={pos.y}
-                        root={pos.y === 0}
-                        onEdit={openPersonEditor}
-                        onDelete={deletePerson}
-                        onQuickAddPartner={quickAddPartner}
-                        onQuickAddChild={quickAddChild}
-                        onToggleCollapse={toggleCollapse}
-                        onOpenFamily={openFamilyEditor}
-                        highlightedId={selectedSearchId}
-                        isMobile={isMobile}
-                      />
-                    );
-                  })}
-                </g>
-              </svg>
+                    if (targetId && positions[targetId]) {
+                      centerOnNode(targetId);
+                    } else {
+                      setPan({ x: 0, y: 0 });
+                    }
+                  }}
+                  style={mapFabWideButtonStyle}
+                  title="Centrar"
+                >
+                  Centrar
+                </button>
+
+                <button onClick={fitTree} style={mapFabWideButtonStyle} title="Autoajustar">
+                  Ajustar
+                </button>
+
+                {lastCreatedId ? (
+                  <button
+                    onClick={() => {
+                      if (!lastCreatedId || !positions[lastCreatedId]) return;
+                      setSelectedSearchId(lastCreatedId);
+                      centerOnNode(lastCreatedId, isMobile ? 1.08 : 1);
+                    }}
+                    style={mapFabWideButtonStyle}
+                    title="Ver último"
+                  >
+                    Ver último
+                  </button>
+                ) : null}
+
+                <button
+                  onClick={toggleFullscreen}
+                  style={mapFabPrimaryButtonStyle}
+                  title="Pantalla completa"
+                >
+                  {isFullscreen ? "Salir" : "Pantalla"}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  ...treeCanvasWrapStyle,
+                  minWidth: isMobile ? "1800px" : "4600px",
+                  minHeight: isMobile ? "1800px" : "3600px",
+                  cursor: dragging ? "grabbing" : "grab",
+                  touchAction: "none",
+                }}
+                onPointerDown={onPointerDown}
+                onTouchStart={onTouchStart}
+              >
+                <svg
+                  id="family-tree-svg"
+                  width={isMobile ? "1800" : "4600"}
+                  height={isMobile ? "1800" : "3600"}
+                  style={{
+                    ...svgStyle,
+                    width: isMobile ? "1800px" : "4600px",
+                    height: isMobile ? "1800px" : "3600px",
+                  }}
+                >
+                  <defs>
+                    <linearGradient id="treeBgGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#fbfffc" />
+                      <stop offset="100%" stopColor="#eef8f1" />
+                    </linearGradient>
+                    <radialGradient id="treeGlow" cx="50%" cy="0%" r="85%">
+                      <stop offset="0%" stopColor="#f4fff7" />
+                      <stop offset="100%" stopColor="#eef7f1" />
+                    </radialGradient>
+                  </defs>
+
+                  <rect x="0" y="0" width="100%" height="100%" fill="url(#treeGlow)" />
+                  <rect
+                    x="0"
+                    y="0"
+                    width="100%"
+                    height="100%"
+                    fill="url(#treeBgGradient)"
+                    opacity="0.55"
+                  />
+
+                  <g
+                    transform={`translate(${isMobile ? 900 : 2300} ${isMobile ? 140 : 150}) translate(${pan.x} ${pan.y}) scale(${zoom})`}
+                  >
+                    {layout.edges.map((edge, idx) => {
+                      const parentPos = positions[edge.from];
+                      const childPos = positions[edge.to];
+                      if (!parentPos || !childPos) return null;
+
+                      const parentBottom = parentPos.y + (isMobile ? 250 : 520);
+                      const childTop = childPos.y;
+
+                      return (
+                        <path
+                          key={idx}
+                          d={curvePath(parentPos.x, parentBottom, childPos.x, childTop)}
+                          fill="none"
+                          stroke="#63a877"
+                          strokeWidth={isMobile ? "3.5" : "5"}
+                          strokeLinecap="round"
+                          opacity="0.96"
+                        />
+                      );
+                    })}
+
+                    {layout.nodes.map((node) => {
+                      const pos = positions[node.id];
+                      if (!pos) return null;
+
+                      return (
+                        <FamilyBlock
+                          key={node.id}
+                          node={node}
+                          x={pos.x}
+                          y={pos.y}
+                          root={pos.y === 0}
+                          onEdit={openPersonEditor}
+                          onDelete={deletePerson}
+                          onQuickAddPartner={quickAddPartner}
+                          onQuickAddChild={quickAddChild}
+                          onToggleCollapse={toggleCollapse}
+                          onOpenFamily={openFamilyEditor}
+                          highlightedId={selectedSearchId}
+                          isMobile={isMobile}
+                        />
+                      );
+                    })}
+                  </g>
+                </svg>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <PersonEditorPanel
@@ -1613,43 +2117,97 @@ export default function FamilyTreeApp({ user }) {
 
 const pageStyle = {
   minHeight: "100vh",
-  background: "linear-gradient(180deg, #eefcf3 0%, #f7fff9 100%)",
-  padding: "20px",
+  background: "radial-gradient(circle at top, #f8fff9 0%, #eefcf2 55%, #ecfaf0 100%)",
+  padding: "16px",
   fontFamily: "Arial, sans-serif",
 };
 
 const containerStyle = {
-  maxWidth: "1820px",
+  maxWidth: "1860px",
   margin: "0 auto",
-  background: "#ffffff",
-  borderRadius: "24px",
+  background: "rgba(255,255,255,0.95)",
+  backdropFilter: "blur(12px)",
+  borderRadius: "30px",
   padding: "22px",
-  boxShadow: "0 12px 35px rgba(0,0,0,0.08)",
+  boxShadow: "0 20px 48px rgba(32, 94, 53, 0.11)",
+  border: "1px solid #d8efe0",
+};
+
+const heroStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "16px",
+  flexWrap: "wrap",
+  marginBottom: "16px",
+};
+
+const brandWrapStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "16px",
+  flexWrap: "wrap",
+};
+
+const brandIconShellStyle = {
+  width: "96px",
+  height: "96px",
+  borderRadius: "28px",
+  background: "radial-gradient(circle at top, #ffffff 0%, #f2fff6 45%, #e9f8ee 100%)",
+  border: "1px solid #d7eedf",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  boxShadow: "0 16px 30px rgba(22, 101, 52, 0.10), inset 0 1px 0 rgba(255,255,255,0.75)",
+};
+
+const brandKickerStyle = {
+  fontSize: "13px",
+  fontWeight: "800",
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  color: "#2e7d4f",
+  marginBottom: "6px",
+};
+
+const heroBadgeStyle = {
+  padding: "14px 16px",
+  borderRadius: "18px",
+  background: "linear-gradient(180deg, #f2fff6 0%, #e7f9ec 100%)",
+  border: "1px solid #cce9d5",
+  minWidth: "140px",
+  boxShadow: "0 10px 22px rgba(22, 101, 52, 0.06)",
+};
+
+const heroBadgeLabelStyle = {
+  fontSize: "12px",
+  fontWeight: "700",
+  color: "#4b7b57",
+};
+
+const heroBadgeValueStyle = {
+  marginTop: "6px",
+  fontSize: "16px",
+  fontWeight: "800",
+  color: "#166534",
 };
 
 const titleStyle = {
   margin: 0,
-  textAlign: "center",
-  color: "#1f2937",
-  fontSize: "46px",
-};
-
-const subtitleStyle = {
-  textAlign: "center",
-  color: "#64748b",
-  marginTop: 10,
-  marginBottom: 22,
-  fontSize: "18px",
+  textAlign: "left",
+  color: "#184f2a",
+  fontSize: "48px",
+  letterSpacing: "-0.02em",
 };
 
 const cloudPanelStyle = {
-  marginTop: "18px",
+  marginTop: "10px",
   marginBottom: "14px",
   padding: "16px",
-  borderRadius: "18px",
-  background: "#ffffff",
-  border: "1px solid #dbe3ec",
-  boxShadow: "0 6px 18px rgba(0,0,0,0.04)",
+  borderRadius: "22px",
+  background: "linear-gradient(180deg, #fbfffc 0%, #f5fff8 100%)",
+  border: "1px solid #d8efe0",
+  boxShadow: "0 8px 22px rgba(22, 101, 52, 0.05)",
 };
 
 const cloudPanelTopRowStyle = {
@@ -1677,28 +2235,20 @@ const cloudPanelRightStyle = {
 const cloudPanelTitleStyle = {
   fontSize: "14px",
   fontWeight: "800",
-  color: "#0f172a",
+  color: "#215a34",
 };
 
 const treeNameInputStyle = {
   width: "100%",
-  padding: "12px 14px",
-  borderRadius: "12px",
-  border: "1.5px solid #cbd5e1",
-  background: "#fff",
+  padding: "13px 14px",
+  borderRadius: "14px",
+  border: "1.5px solid #cfe7d6",
+  background: "#ffffff",
   fontSize: "15px",
-  color: "#111827",
+  color: "#12321f",
   boxSizing: "border-box",
-};
-
-const cloudStatusStyle = {
-  padding: "10px 12px",
-  borderRadius: "12px",
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
-  color: "#334155",
-  fontWeight: "700",
-  fontSize: "13px",
+  outline: "none",
+  boxShadow: "inset 0 1px 2px rgba(0,0,0,0.03)",
 };
 
 const treeListWrapStyle = {
@@ -1708,7 +2258,7 @@ const treeListWrapStyle = {
 const treeListTitleStyle = {
   fontSize: "14px",
   fontWeight: "800",
-  color: "#0f172a",
+  color: "#215a34",
   marginBottom: "10px",
 };
 
@@ -1724,34 +2274,35 @@ const treeListItemStyle = {
   alignItems: "center",
   gap: "10px",
   padding: "10px",
-  borderRadius: "12px",
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
+  borderRadius: "14px",
+  background: "#f5fbf6",
+  border: "1px solid #d8efe0",
 };
 
 const treeListItemActiveStyle = {
-  background: "#eef2ff",
-  border: "1px solid #c7d2fe",
+  background: "#eaf9ee",
+  border: "1px solid #9fd1ad",
+  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.05)",
 };
 
 const treeOpenButtonStyle = {
   flex: 1,
   textAlign: "left",
-  padding: "10px 12px",
-  borderRadius: "10px",
-  border: "1px solid #cbd5e1",
+  padding: "11px 12px",
+  borderRadius: "12px",
+  border: "1px solid #cfe7d6",
   background: "#fff",
-  color: "#111827",
+  color: "#12321f",
   cursor: "pointer",
   fontWeight: "700",
   fontSize: "14px",
 };
 
 const treeDeleteButtonStyle = {
-  padding: "10px 12px",
-  borderRadius: "10px",
+  padding: "11px 12px",
+  borderRadius: "12px",
   border: "none",
-  background: "#dc2626",
+  background: "#d83c3c",
   color: "#fff",
   cursor: "pointer",
   fontWeight: "700",
@@ -1760,62 +2311,58 @@ const treeDeleteButtonStyle = {
 
 const treeListEmptyStyle = {
   padding: "14px",
-  borderRadius: "12px",
-  background: "#f8fafc",
-  border: "1px dashed #cbd5e1",
-  color: "#64748b",
+  borderRadius: "14px",
+  background: "#f5fbf6",
+  border: "1px dashed #cfe7d6",
+  color: "#62806c",
   fontSize: "14px",
   marginTop: "10px",
   wordBreak: "break-all",
 };
 
-const labelStyle = {
+const sharePanelStyle = {
+  marginTop: "16px",
+  marginBottom: "16px",
+  padding: "18px",
+  borderRadius: "22px",
+  background: "linear-gradient(180deg, #ffffff 0%, #f7fff9 100%)",
+  border: "1px solid #d8efe0",
+  boxShadow: "0 10px 24px rgba(22, 101, 52, 0.05)",
+};
+
+const sharePanelHeaderStyle = {
+  marginBottom: "14px",
+};
+
+const sharePanelTitleStyle = {
+  fontSize: "16px",
+  fontWeight: "800",
+  color: "#184f2a",
+};
+
+const sharePanelTextStyle = {
+  marginTop: "6px",
   fontSize: "14px",
-  fontWeight: "700",
-  color: "#1f2937",
+  color: "#64806f",
+  lineHeight: 1.5,
 };
 
-const inputStyle = {
-  padding: "13px 14px",
-  borderRadius: "12px",
-  border: "1.5px solid #b9c4d1",
-  background: "#ffffff",
-  fontSize: "15px",
-  color: "#111827",
-  minHeight: "48px",
-  width: "100%",
-  boxSizing: "border-box",
+const sharePanelActionsStyle = {
+  display: "flex",
+  gap: "10px",
+  flexWrap: "wrap",
+  alignItems: "center",
 };
 
-const fileInputStyle = {
-  padding: "10px 12px",
-  borderRadius: "12px",
-  border: "1.5px solid #b9c4d1",
-  background: "#ffffff",
+const shareLinkBoxStyle = {
+  marginTop: "14px",
+  padding: "12px 14px",
+  borderRadius: "14px",
+  background: "#f5fbf6",
+  border: "1px dashed #cfe7d6",
+  color: "#456555",
   fontSize: "14px",
-  color: "#111827",
-  minHeight: "48px",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const textareaStyle = {
-  padding: "13px 14px",
-  borderRadius: "12px",
-  border: "1.5px solid #b9c4d1",
-  background: "#ffffff",
-  fontSize: "15px",
-  color: "#111827",
-  minHeight: "120px",
-  resize: "vertical",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const previewImageStyle = {
-  width: "100%",
-  height: "100%",
-  objectFit: "cover",
+  wordBreak: "break-all",
 };
 
 const topBarStyle = {
@@ -1827,22 +2374,24 @@ const topBarStyle = {
 
 const selectorBlockStyle = {
   padding: "16px",
-  borderRadius: "16px",
-  background: "#eff6ff",
-  border: "1px solid #bfdbfe",
+  borderRadius: "18px",
+  background: "linear-gradient(180deg, #effcf2 0%, #f6fff8 100%)",
+  border: "1px solid #cfe7d6",
+  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.04)",
 };
 
 const searchBlockStyle = {
   padding: "16px",
-  borderRadius: "16px",
-  background: "#f8fafc",
-  border: "1px solid #dbe3ec",
+  borderRadius: "18px",
+  background: "linear-gradient(180deg, #fbfffc 0%, #f5fff8 100%)",
+  border: "1px solid #d8efe0",
+  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.04)",
 };
 
 const selectorTitleStyle = {
   fontSize: "14px",
   fontWeight: "700",
-  color: "#1e3a8a",
+  color: "#215a34",
   marginBottom: "8px",
 };
 
@@ -1851,10 +2400,10 @@ const selectorStyle = {
   minWidth: "220px",
   padding: "12px 14px",
   borderRadius: "12px",
-  border: "1.5px solid #93c5fd",
+  border: "1.5px solid #b7dcc2",
   background: "#ffffff",
   fontSize: "15px",
-  color: "#111827",
+  color: "#12321f",
 };
 
 const searchRowStyle = {
@@ -1867,59 +2416,130 @@ const searchInputStyle = {
   width: "100%",
   padding: "12px 14px",
   borderRadius: "12px",
-  border: "1.5px solid #cbd5e1",
+  border: "1.5px solid #cfe7d6",
   background: "#fff",
   fontSize: "15px",
-  color: "#111827",
+  color: "#12321f",
 };
 
 const searchSelectStyle = {
   width: "100%",
   padding: "12px 14px",
   borderRadius: "12px",
-  border: "1.5px solid #cbd5e1",
+  border: "1.5px solid #cfe7d6",
   background: "#fff",
   fontSize: "15px",
-  color: "#111827",
+  color: "#12321f",
 };
 
 const zoomBlockStyle = {
   padding: "16px",
-  borderRadius: "16px",
-  background: "#f8fafc",
-  border: "1px solid #dbe3ec",
+  borderRadius: "20px",
+  background: "linear-gradient(180deg, #ffffff 0%, #f5fff8 100%)",
+  border: "1px solid #d8efe0",
   display: "flex",
   alignItems: "center",
   gap: "10px",
   flexWrap: "wrap",
   justifyContent: "center",
-};
-
-const zoomLabelStyle = {
-  minWidth: "95px",
-  textAlign: "center",
-  fontWeight: "700",
-  color: "#0f172a",
-  fontSize: "14px",
+  boxShadow: "0 8px 20px rgba(22, 101, 52, 0.05)",
 };
 
 const emptyStyle = {
   padding: "26px",
-  border: "2px dashed #cbd5e1",
-  borderRadius: "16px",
+  border: "2px dashed #cfe7d6",
+  borderRadius: "18px",
   textAlign: "center",
-  color: "#64748b",
+  color: "#62806c",
   marginTop: "20px",
   fontSize: "18px",
+  background: "#fbfffc",
 };
 
 const treeViewportStyle = {
   marginTop: "24px",
-  borderRadius: "18px",
-  background: "linear-gradient(180deg, #fafafa 0%, #f8fafc 100%)",
-  border: "1px solid #e5e7eb",
-  overflow: "auto",
+  borderRadius: "28px",
+  background: "radial-gradient(circle at top, #fcfffd 0%, #f3fbf5 55%, #edf8ef 100%)",
+  border: "1px solid #d8efe0",
+  overflow: "hidden",
   height: "78vh",
+  boxShadow:
+    "inset 0 0 0 1px rgba(214,239,222,0.2), 0 18px 40px rgba(22, 101, 52, 0.08)",
+  position: "relative",
+  touchAction: "none",
+};
+
+const fullscreenViewportStyle = {
+  borderRadius: "0",
+  marginTop: "0",
+  background: "radial-gradient(circle at top, #fbfffc 0%, #f2faf4 58%, #edf8ef 100%)",
+};
+
+const mapFloatingControlsStyle = {
+  position: "absolute",
+  zIndex: 25,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "stretch",
+  background: "rgba(255,255,255,0.88)",
+  backdropFilter: "blur(10px)",
+  border: "1px solid #d9efe1",
+  borderRadius: "18px",
+  padding: "10px",
+  boxShadow: "0 18px 34px rgba(22, 101, 52, 0.12)",
+};
+
+const mapFabButtonStyle = {
+  minWidth: "48px",
+  height: "44px",
+  borderRadius: "12px",
+  border: "1px solid #d5eadc",
+  background: "#ffffff",
+  color: "#143523",
+  fontWeight: "900",
+  fontSize: "22px",
+  cursor: "pointer",
+  boxShadow: "0 6px 16px rgba(22, 101, 52, 0.05)",
+};
+
+const mapFabWideButtonStyle = {
+  minWidth: "96px",
+  height: "42px",
+  borderRadius: "12px",
+  border: "1px solid #d5eadc",
+  background: "#ffffff",
+  color: "#143523",
+  fontWeight: "800",
+  fontSize: "13px",
+  cursor: "pointer",
+  boxShadow: "0 6px 16px rgba(22, 101, 52, 0.05)",
+};
+
+const mapFabPrimaryButtonStyle = {
+  minWidth: "96px",
+  height: "42px",
+  borderRadius: "12px",
+  border: "1px solid #97d5aa",
+  background: "linear-gradient(180deg, #2ecc71 0%, #1f8f4d 100%)",
+  color: "#fff",
+  fontWeight: "800",
+  fontSize: "13px",
+  cursor: "pointer",
+  boxShadow: "0 10px 20px rgba(34, 197, 94, 0.20)",
+};
+
+const mapZoomBadgeStyle = {
+  minWidth: "70px",
+  height: "38px",
+  borderRadius: "11px",
+  background: "#effaf2",
+  border: "1px solid #d8eee0",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#1b5b35",
+  fontWeight: "800",
+  fontSize: "13px",
 };
 
 const treeCanvasWrapStyle = {
@@ -1938,51 +2558,55 @@ const familyBlockStyle = {
   width: "100%",
   height: "100%",
   overflow: "visible",
-  background: "#ffffff",
-  border: "2px solid #dbe3ec",
-  borderRadius: "24px",
+  background: "linear-gradient(180deg, #ffffff 0%, #fbfffc 100%)",
+  border: "1px solid #dcefe3",
+  borderRadius: "28px",
   boxSizing: "border-box",
-  padding: "16px",
-  boxShadow: "0 10px 24px rgba(0,0,0,0.05)",
+  padding: "18px",
+  boxShadow: "0 16px 34px rgba(32, 94, 53, 0.08)",
 };
 
 const familyBlockRootStyle = {
   width: "100%",
   height: "100%",
   overflow: "visible",
-  background: "#f0fdf4",
-  border: "2px solid #86efac",
-  borderRadius: "24px",
+  background: "linear-gradient(180deg, #effcf2 0%, #fbfffc 100%)",
+  border: "2px solid #96d3a4",
+  borderRadius: "28px",
   boxSizing: "border-box",
-  padding: "16px",
-  boxShadow: "0 10px 28px rgba(0,0,0,0.07)",
+  padding: "18px",
+  boxShadow: "0 18px 36px rgba(24, 79, 42, 0.12)",
 };
 
 const highlightedBlockStyle = {
-  boxShadow: "0 0 0 4px #facc15, 0 10px 28px rgba(0,0,0,0.10)",
-  borderColor: "#facc15",
+  boxShadow: "0 0 0 4px #dcfce7, 0 18px 34px rgba(24, 79, 42, 0.14)",
+  borderColor: "#75c28c",
 };
 
-const familyHeaderRowStyle = {
+const familyTopStripStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
   gap: "10px",
-  marginBottom: "14px",
 };
 
-const familyHeaderStyle = {
-  fontSize: "15px",
+const familyBadgeStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "6px 10px",
+  borderRadius: "999px",
+  background: "#ecfdf3",
+  color: "#166534",
   fontWeight: "800",
-  color: "#334155",
+  letterSpacing: "0.01em",
 };
 
 const collapseButtonStyle = {
-  padding: "9px 11px",
-  borderRadius: "10px",
-  border: "1px solid #cbd5e1",
+  padding: "9px 12px",
+  borderRadius: "12px",
+  border: "1px solid #cfe7d6",
   background: "#fff",
-  color: "#334155",
+  color: "#2c5e42",
   fontWeight: "700",
   fontSize: "12px",
   cursor: "pointer",
@@ -2007,11 +2631,19 @@ const partnerCenterLinkWrapStyle = {
   justifyContent: "center",
 };
 
+const partnerPillWrapStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "100%",
+  height: "100%",
+};
+
 const partnerCenterLinkStyle = {
   width: "24px",
   height: "5px",
   borderRadius: "999px",
-  background: "#22c55e",
+  background: "linear-gradient(90deg, #4f9d64 0%, #7dc790 100%)",
 };
 
 const familyBottomMetaStyle = {
@@ -2023,19 +2655,19 @@ const familyBottomMetaStyle = {
 };
 
 const metaChipStyle = {
-  padding: "7px 12px",
+  padding: "8px 12px",
   borderRadius: "999px",
-  background: "#f1f5f9",
-  color: "#334155",
+  background: "#eef8f1",
+  color: "#2f5d42",
   fontSize: "12px",
   fontWeight: "700",
 };
 
 const metaChipBlueStyle = {
-  padding: "7px 12px",
+  padding: "8px 12px",
   borderRadius: "999px",
-  background: "#eff6ff",
-  color: "#1d4ed8",
+  background: "#ecfdf3",
+  color: "#16713d",
   fontSize: "12px",
   fontWeight: "700",
 };
@@ -2044,48 +2676,57 @@ const familyBottomActionsStyle = {
   display: "flex",
   gap: "10px",
   justifyContent: "center",
-  marginTop: "14px",
+  marginTop: "16px",
 };
 
 const personMiniStyle = {
-  width: "205px",
-  minHeight: "290px",
+  width: "220px",
+  minHeight: "345px",
   background: "#fff",
-  border: "1px solid #e5e7eb",
-  borderRadius: "18px",
-  padding: "12px",
+  border: "1px solid #e3f0e7",
+  borderRadius: "22px",
+  padding: "14px",
   boxSizing: "border-box",
+  boxShadow: "0 10px 20px rgba(32, 94, 53, 0.05)",
 };
 
 const personMiniImageWrapStyle = {
   width: "100%",
-  height: "96px",
-  borderRadius: "12px",
+  height: "132px",
+  borderRadius: "16px",
   overflow: "hidden",
-  background: "#f3f4f6",
-  marginBottom: "10px",
+  background: "#eef8f1",
+  marginBottom: "12px",
 };
 
 const personMiniNameStyle = {
-  fontSize: "15px",
+  fontSize: "16px",
   fontWeight: "800",
-  color: "#111827",
+  color: "#12321f",
   textAlign: "center",
   lineHeight: 1.15,
-  minHeight: "38px",
+  minHeight: "42px",
   marginBottom: "10px",
 };
 
 const personMiniInfoStyle = {
-  minHeight: "64px",
-  borderRadius: "10px",
-  background: "#f8fafc",
-  padding: "8px",
+  minHeight: "72px",
+  borderRadius: "14px",
+  background: "#f6fbf7",
+  padding: "9px",
   fontSize: "11px",
   lineHeight: 1.35,
-  color: "#334155",
+  color: "#365947",
   textAlign: "center",
-  marginBottom: "10px",
+  marginBottom: "12px",
+};
+
+const personMiniNotesStyle = {
+  borderRadius: "10px",
+  background: "#f7fcf8",
+  color: "#567262",
+  lineHeight: 1.3,
+  textAlign: "center",
 };
 
 const personMiniButtonsStyle = {
@@ -2106,17 +2747,18 @@ const imagePlaceholderStyle = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  color: "#9ca3af",
-  fontWeight: "600",
+  color: "#8aa19a",
+  fontWeight: "700",
   fontSize: "12px",
+  background: "linear-gradient(180deg, #f2fbf4 0%, #e7f5ea 100%)",
 };
 
 const editButtonStyle = {
   flex: 1,
   padding: "11px 10px",
-  borderRadius: "10px",
+  borderRadius: "12px",
   border: "none",
-  background: "#2563eb",
+  background: "#2f7f53",
   color: "#fff",
   fontWeight: "700",
   fontSize: "13px",
@@ -2126,9 +2768,9 @@ const editButtonStyle = {
 const deleteButtonStyle = {
   flex: 1,
   padding: "11px 10px",
-  borderRadius: "10px",
+  borderRadius: "12px",
   border: "none",
-  background: "#dc2626",
+  background: "#d83c3c",
   color: "#fff",
   fontWeight: "700",
   fontSize: "13px",
@@ -2138,9 +2780,9 @@ const deleteButtonStyle = {
 const softGreenButtonStyle = {
   flex: 1,
   padding: "11px 10px",
-  borderRadius: "10px",
-  border: "1px solid #86efac",
-  background: "#f0fdf4",
+  borderRadius: "12px",
+  border: "1px solid #9fd1ad",
+  background: "#effcf2",
   color: "#166534",
   fontWeight: "700",
   fontSize: "13px",
@@ -2150,20 +2792,20 @@ const softGreenButtonStyle = {
 const softBlueButtonStyle = {
   flex: 1,
   padding: "11px 10px",
-  borderRadius: "10px",
-  border: "1px solid #93c5fd",
-  background: "#eff6ff",
-  color: "#1d4ed8",
+  borderRadius: "12px",
+  border: "1px solid #b8dbc4",
+  background: "#f5fff8",
+  color: "#215a34",
   fontWeight: "700",
   fontSize: "13px",
   cursor: "pointer",
 };
 
 const primaryButton = {
-  padding: "12px 18px",
-  borderRadius: "12px",
+  padding: "13px 18px",
+  borderRadius: "14px",
   border: "none",
-  background: "#16a34a",
+  background: "linear-gradient(180deg, #2d8b4f 0%, #1f6f3d 100%)",
   color: "#fff",
   cursor: "pointer",
   fontWeight: "700",
@@ -2172,10 +2814,23 @@ const primaryButton = {
 
 const secondaryButton = {
   padding: "11px 15px",
-  borderRadius: "12px",
-  border: "1px solid #cfd8e3",
+  borderRadius: "13px",
+  border: "1px solid #cfe7d6",
   background: "#fff",
-  color: "#111827",
+  color: "#12321f",
+  cursor: "pointer",
+  fontWeight: "700",
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "13px",
+};
+
+const greenOutlineButton = {
+  padding: "11px 15px",
+  borderRadius: "13px",
+  border: "1px solid #9fd1ad",
+  background: "#effcf2",
+  color: "#166534",
   cursor: "pointer",
   fontWeight: "700",
   display: "inline-flex",
@@ -2185,9 +2840,9 @@ const secondaryButton = {
 
 const dangerButton = {
   padding: "12px 18px",
-  borderRadius: "12px",
+  borderRadius: "13px",
   border: "none",
-  background: "#dc2626",
+  background: "#d83c3c",
   color: "#fff",
   cursor: "pointer",
   fontWeight: "700",
@@ -2196,9 +2851,9 @@ const dangerButton = {
 
 const familyActionButtonGreen = {
   padding: "13px 18px",
-  borderRadius: "12px",
+  borderRadius: "14px",
   border: "none",
-  background: "#16a34a",
+  background: "linear-gradient(180deg, #2d8b4f 0%, #1f6f3d 100%)",
   color: "#fff",
   fontWeight: "700",
   fontSize: "13px",
@@ -2207,10 +2862,10 @@ const familyActionButtonGreen = {
 
 const familyActionButtonBlue = {
   padding: "13px 18px",
-  borderRadius: "12px",
-  border: "none",
-  background: "#2563eb",
-  color: "#fff",
+  borderRadius: "14px",
+  border: "1px solid #9fd1ad",
+  background: "#effcf2",
+  color: "#166534",
   fontWeight: "700",
   fontSize: "13px",
   cursor: "pointer",
@@ -2218,10 +2873,10 @@ const familyActionButtonBlue = {
 
 const familyActionButtonGray = {
   padding: "13px 18px",
-  borderRadius: "12px",
-  border: "1px solid #cbd5e1",
+  borderRadius: "14px",
+  border: "1px solid #cfe7d6",
   background: "#fff",
-  color: "#334155",
+  color: "#2f5d42",
   fontWeight: "700",
   fontSize: "13px",
   cursor: "pointer",
@@ -2230,7 +2885,7 @@ const familyActionButtonGray = {
 const overlayStyle = {
   position: "fixed",
   inset: 0,
-  background: "rgba(15,23,42,0.18)",
+  background: "rgba(17, 54, 30, 0.18)",
   display: "flex",
   justifyContent: "flex-end",
   zIndex: 1000,
@@ -2239,7 +2894,7 @@ const overlayStyle = {
 const overlayCenterStyle = {
   position: "fixed",
   inset: 0,
-  background: "rgba(15,23,42,0.18)",
+  background: "rgba(17, 54, 30, 0.18)",
   display: "flex",
   justifyContent: "center",
   alignItems: "center",
@@ -2247,11 +2902,11 @@ const overlayCenterStyle = {
 };
 
 const sidePanelStyle = {
-  width: "420px",
+  width: "430px",
   maxWidth: "100%",
   height: "100%",
   background: "#ffffff",
-  boxShadow: "-8px 0 30px rgba(0,0,0,0.15)",
+  boxShadow: "-8px 0 30px rgba(32, 94, 53, 0.15)",
   display: "flex",
   flexDirection: "column",
 };
@@ -2261,20 +2916,20 @@ const panelHeaderStyle = {
   alignItems: "center",
   justifyContent: "space-between",
   padding: "18px 18px 12px",
-  borderBottom: "1px solid #e5e7eb",
+  borderBottom: "1px solid #e4f2e8",
 };
 
 const panelTitleStyle = {
   fontSize: "20px",
   fontWeight: "800",
-  color: "#111827",
+  color: "#12321f",
 };
 
 const panelCloseStyle = {
   width: "36px",
   height: "36px",
   borderRadius: "10px",
-  border: "1px solid #cbd5e1",
+  border: "1px solid #cfe7d6",
   background: "#fff",
   cursor: "pointer",
   fontWeight: "700",
@@ -2288,13 +2943,62 @@ const panelBodyStyle = {
   gap: "10px",
 };
 
+const labelStyle = {
+  fontSize: "14px",
+  fontWeight: "700",
+  color: "#214e34",
+};
+
+const inputStyle = {
+  padding: "13px 14px",
+  borderRadius: "13px",
+  border: "1.5px solid #cfe7d6",
+  background: "#ffffff",
+  fontSize: "15px",
+  color: "#12321f",
+  minHeight: "48px",
+  width: "100%",
+  boxSizing: "border-box",
+};
+
+const fileInputStyle = {
+  padding: "10px 12px",
+  borderRadius: "13px",
+  border: "1.5px solid #cfe7d6",
+  background: "#ffffff",
+  fontSize: "14px",
+  color: "#12321f",
+  minHeight: "48px",
+  width: "100%",
+  boxSizing: "border-box",
+};
+
+const textareaStyle = {
+  padding: "13px 14px",
+  borderRadius: "13px",
+  border: "1.5px solid #cfe7d6",
+  background: "#ffffff",
+  fontSize: "15px",
+  color: "#12321f",
+  minHeight: "120px",
+  resize: "vertical",
+  width: "100%",
+  boxSizing: "border-box",
+};
+
+const previewImageStyle = {
+  width: "100%",
+  height: "100%",
+  objectFit: "cover",
+};
+
 const sidePreviewWrapStyle = {
   width: "100%",
   height: "180px",
   borderRadius: "14px",
   overflow: "hidden",
-  background: "#e5e7eb",
-  border: "1px solid #d1d5db",
+  background: "#eef8f1",
+  border: "1px solid #d8efe0",
 };
 
 const sideButtonRowStyle = {
@@ -2308,8 +3012,8 @@ const familyPanelStyle = {
   maxWidth: "96vw",
   maxHeight: "90vh",
   background: "#fff",
-  borderRadius: "22px",
-  boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+  borderRadius: "24px",
+  boxShadow: "0 18px 40px rgba(32, 94, 53, 0.18)",
   overflow: "hidden",
 };
 
@@ -2323,21 +3027,21 @@ const familyPanelBodyStyle = {
 };
 
 const familySectionStyle = {
-  border: "1px solid #e5e7eb",
+  border: "1px solid #d8efe0",
   borderRadius: "16px",
   padding: "14px",
-  background: "#f8fafc",
+  background: "#f8fdf9",
 };
 
 const familySectionTitleStyle = {
   fontSize: "15px",
   fontWeight: "800",
-  color: "#1f2937",
+  color: "#214e34",
   marginBottom: "10px",
 };
 
 const familyItemCardStyle = {
-  border: "1px solid #dbe3ec",
+  border: "1px solid #d8efe0",
   borderRadius: "14px",
   background: "#fff",
   padding: "12px",
@@ -2349,7 +3053,7 @@ const familyItemCardStyle = {
 
 const familyItemNameStyle = {
   fontWeight: "700",
-  color: "#111827",
+  color: "#12321f",
 };
 
 const childrenListStyle = {
@@ -2360,7 +3064,7 @@ const childrenListStyle = {
 };
 
 const childRowStyle = {
-  border: "1px solid #dbe3ec",
+  border: "1px solid #d8efe0",
   borderRadius: "14px",
   background: "#fff",
   padding: "10px 12px",
@@ -2372,5 +3076,5 @@ const childRowStyle = {
 
 const childNameStyle = {
   fontWeight: "700",
-  color: "#111827",
+  color: "#12321f",
 };
