@@ -8,12 +8,8 @@ function getPersonById(people, id) {
 function getRoots(people) {
   return people.filter((p) => {
     const hasNoParents = !p.parent1 && !p.parent2;
-
     if (!hasNoParents) return false;
-
-    // Evita duplicar parejas en la raíz
     if (p.partnerId && p.id > p.partnerId) return false;
-
     return true;
   });
 }
@@ -66,10 +62,10 @@ function measureTree(node, level = 0, layout = { levels: [], nodes: [], edges: [
   return layout;
 }
 
-function createPositions(layout) {
+function createPositions(layout, isMobile) {
   const positions = {};
-  const gapX = 380;
-  const gapY = 360;
+  const gapX = isMobile ? 250 : 380;
+  const gapY = isMobile ? 280 : 360;
 
   layout.levels.forEach((nodes, levelIndex) => {
     const count = nodes.length;
@@ -118,14 +114,13 @@ function PublicPersonCard({ person }) {
   );
 }
 
-function PublicFamilyBlock({ node, x, y, root, highlightedId }) {
+function PublicFamilyBlock({ node, x, y, root, highlightedId, isMobile }) {
   const { person, partner } = node;
-  const w = partner ? 360 : 180;
-  const h = root ? 290 : 270;
+  const w = partner ? (isMobile ? 250 : 360) : isMobile ? 120 : 180;
+  const h = root ? (isMobile ? 230 : 290) : isMobile ? 215 : 270;
   const left = x - w / 2;
 
-  const isHighlighted =
-    highlightedId && (highlightedId === person.id || highlightedId === partner?.id);
+  const isHighlighted = highlightedId && (highlightedId === person.id || highlightedId === partner?.id);
 
   return (
     <foreignObject x={left} y={y} width={w} height={h}>
@@ -136,13 +131,10 @@ function PublicFamilyBlock({ node, x, y, root, highlightedId }) {
           ...(isHighlighted ? publicHighlightedStyle : {}),
         }}
       >
-        <div style={publicHeaderStyle}>
-          {partner ? "Unidad familiar" : "Persona"}
-        </div>
+        <div style={publicHeaderStyle}>{partner ? "Unidad familiar" : "Persona"}</div>
 
         <div style={partner ? publicFamilyRowStyle : publicFamilySingleStyle}>
           <PublicPersonCard person={person} />
-
           {partner ? (
             <>
               <div style={publicLinkWrapStyle}>
@@ -162,10 +154,18 @@ export default function PublicTreePage({ slug }) {
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [selectedSearchId, setSelectedSearchId] = useState("");
-  const [zoom, setZoom] = useState(0.85);
+  const [zoom, setZoom] = useState(typeof window !== "undefined" && window.innerWidth <= 900 ? 0.68 : 0.85);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 900 : false);
+
   const dragRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     async function loadPublicTree() {
@@ -185,11 +185,7 @@ export default function PublicTreePage({ slug }) {
   const people = Array.isArray(treeData?.people) ? treeData.people : [];
   const roots = useMemo(() => getRoots(people), [people]);
 
-  const forest = useMemo(() => {
-    return roots
-      .map((root) => buildTree(people, root.id))
-      .filter(Boolean);
-  }, [people, roots]);
+  const forest = useMemo(() => roots.map((root) => buildTree(people, root.id)).filter(Boolean), [people, roots]);
 
   const layout = useMemo(() => {
     const merged = { levels: [], nodes: [], edges: [] };
@@ -207,19 +203,14 @@ export default function PublicTreePage({ slug }) {
     return merged;
   }, [forest]);
 
-  const positions = useMemo(() => createPositions(layout), [layout]);
+  const positions = useMemo(() => createPositions(layout, isMobile), [layout, isMobile]);
 
   useEffect(() => {
-    if (!layout || !layout.nodes.length) return;
-
+    if (!layout.nodes.length) return;
     const first = layout.nodes[0];
     const pos = positions[first.id];
-
     if (pos) {
-      setPan({
-        x: -pos.x,
-        y: -pos.y + 120,
-      });
+      setPan({ x: -pos.x, y: -pos.y + 120 });
     }
   }, [layout, positions]);
 
@@ -231,36 +222,44 @@ export default function PublicTreePage({ slug }) {
 
   function focusPerson(personId) {
     if (!personId || !positions[personId]) return;
-
     setSelectedSearchId(personId);
-    setPan({
-      x: -positions[personId].x,
-      y: -positions[personId].y + 120,
-    });
-    setZoom(1.05);
+    setPan({ x: -positions[personId].x, y: -positions[personId].y + 120 });
+    setZoom(isMobile ? 0.92 : 1.05);
+  }
+
+  function startDrag(clientX, clientY) {
+    setDragging(true);
+    dragRef.current = { x: clientX, y: clientY, panX: pan.x, panY: pan.y };
+  }
+
+  function moveDrag(clientX, clientY) {
+    if (!dragging) return;
+    const dx = clientX - dragRef.current.x;
+    const dy = clientY - dragRef.current.y;
+    setPan({ x: dragRef.current.panX + dx, y: dragRef.current.panY + dy });
   }
 
   function onMouseDown(e) {
-    setDragging(true);
-    dragRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      panX: pan.x,
-      panY: pan.y,
-    };
+    startDrag(e.clientX, e.clientY);
   }
 
   function onMouseMove(e) {
-    if (!dragging) return;
-    const dx = e.clientX - dragRef.current.x;
-    const dy = e.clientY - dragRef.current.y;
-    setPan({
-      x: dragRef.current.panX + dx,
-      y: dragRef.current.panY + dy,
-    });
+    moveDrag(e.clientX, e.clientY);
   }
 
-  function onMouseUp() {
+  function onTouchStart(e) {
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    startDrag(touch.clientX, touch.clientY);
+  }
+
+  function onTouchMove(e) {
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    moveDrag(touch.clientX, touch.clientY);
+  }
+
+  function stopDrag() {
     setDragging(false);
   }
 
@@ -299,19 +298,21 @@ export default function PublicTreePage({ slug }) {
   return (
     <div style={pageStyle}>
       <div style={publicWrapStyle}>
-        <div style={publicHeroStyle}>
+        <div style={{ ...publicHeroStyle, padding: isMobile ? "16px" : "22px" }}>
           <div>
-            <h1 style={publicTitleStyle}>{treeData.name || "Árbol familiar"}</h1>
+            <h1 style={{ ...publicTitleStyle, fontSize: isMobile ? "28px" : "40px" }}>
+              {treeData.name || "Árbol familiar"}
+            </h1>
             <p style={publicSubtitleStyle}>Árbol compartido · solo lectura</p>
           </div>
 
-          <div style={publicHeroActionsStyle}>
+          <div style={{ ...publicHeroActionsStyle, width: isMobile ? "100%" : "auto" }}>
             <input
               type="text"
               placeholder="Buscar familiar"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              style={publicSearchInputStyle}
+              style={{ ...publicSearchInputStyle, minWidth: isMobile ? "100%" : "220px" }}
             />
             <select
               value={selectedSearchId}
@@ -319,7 +320,7 @@ export default function PublicTreePage({ slug }) {
                 setSelectedSearchId(e.target.value);
                 focusPerson(e.target.value);
               }}
-              style={publicSearchSelectStyle}
+              style={{ ...publicSearchSelectStyle, minWidth: isMobile ? "100%" : "220px" }}
             >
               <option value="">Selecciona resultado</option>
               {filteredPeople.map((p) => (
@@ -328,14 +329,14 @@ export default function PublicTreePage({ slug }) {
                 </option>
               ))}
             </select>
-            <button style={publicButtonStyle} onClick={handleCopyLink}>
+            <button style={{ ...publicButtonStyle, width: isMobile ? "100%" : "auto" }} onClick={handleCopyLink}>
               Copiar link
             </button>
           </div>
         </div>
 
         <div style={publicToolbarStyle}>
-          <button style={publicButtonStyle} onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.05).toFixed(2)))}>
+          <button style={publicButtonStyle} onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.05).toFixed(2)))}>
             -
           </button>
           <div style={publicZoomLabelStyle}>Zoom {Math.round(zoom * 100)}%</div>
@@ -345,7 +346,7 @@ export default function PublicTreePage({ slug }) {
           <button
             style={publicButtonStyle}
             onClick={() => {
-              setZoom(0.85);
+              setZoom(isMobile ? 0.68 : 0.85);
               setPan({ x: 0, y: 0 });
               setSelectedSearchId("");
             }}
@@ -360,24 +361,34 @@ export default function PublicTreePage({ slug }) {
           <div
             style={treeViewportStyle}
             onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
+            onMouseUp={stopDrag}
+            onMouseLeave={stopDrag}
+            onTouchMove={onTouchMove}
+            onTouchEnd={stopDrag}
           >
             <div
               style={{
                 ...treeCanvasWrapStyle,
+                minWidth: isMobile ? "2200px" : "3400px",
+                minHeight: isMobile ? "1800px" : "2600px",
                 cursor: dragging ? "grabbing" : "grab",
               }}
               onMouseDown={onMouseDown}
+              onTouchStart={onTouchStart}
             >
-              <svg id="public-family-tree-svg" width="3400" height="2600" style={svgStyle}>
-                <g transform={`translate(1700 120) translate(${pan.x} ${pan.y}) scale(${zoom})`}>
+              <svg
+                id="public-family-tree-svg"
+                width={isMobile ? "2200" : "3400"}
+                height={isMobile ? "1800" : "2600"}
+                style={svgStyle}
+              >
+                <g transform={`translate(${isMobile ? 1100 : 1700} 120) translate(${pan.x} ${pan.y}) scale(${zoom})`}>
                   {layout.edges.map((edge, idx) => {
                     const parentPos = positions[edge.from];
                     const childPos = positions[edge.to];
                     if (!parentPos || !childPos) return null;
 
-                    const parentBottom = parentPos.y + 300;
+                    const parentBottom = parentPos.y + (isMobile ? 240 : 300);
                     const childTop = childPos.y;
 
                     return (
@@ -386,7 +397,7 @@ export default function PublicTreePage({ slug }) {
                         d={curvePath(parentPos.x, parentBottom, childPos.x, childTop)}
                         fill="none"
                         stroke="#94a3b8"
-                        strokeWidth="4"
+                        strokeWidth={isMobile ? "3" : "4"}
                         strokeLinecap="round"
                       />
                     );
@@ -404,6 +415,7 @@ export default function PublicTreePage({ slug }) {
                         y={pos.y}
                         root={pos.y === 0}
                         highlightedId={selectedSearchId}
+                        isMobile={isMobile}
                       />
                     );
                   })}
@@ -420,7 +432,7 @@ export default function PublicTreePage({ slug }) {
 const pageStyle = {
   minHeight: "100vh",
   background: "linear-gradient(180deg, #eefcf3 0%, #f7fff9 100%)",
-  padding: "20px",
+  padding: "16px",
   fontFamily: "Arial, sans-serif",
 };
 
@@ -432,7 +444,6 @@ const publicWrapStyle = {
 const publicHeroStyle = {
   background: "#ffffff",
   borderRadius: "24px",
-  padding: "22px",
   boxShadow: "0 12px 35px rgba(0,0,0,0.08)",
   marginBottom: "14px",
   display: "flex",
@@ -445,7 +456,6 @@ const publicHeroStyle = {
 const publicTitleStyle = {
   margin: 0,
   color: "#1f2937",
-  fontSize: "40px",
 };
 
 const publicSubtitleStyle = {
@@ -467,7 +477,6 @@ const publicSearchInputStyle = {
   borderRadius: "12px",
   border: "1.5px solid #cbd5e1",
   fontSize: "14px",
-  minWidth: "220px",
 };
 
 const publicSearchSelectStyle = {
@@ -475,7 +484,6 @@ const publicSearchSelectStyle = {
   borderRadius: "12px",
   border: "1.5px solid #cbd5e1",
   fontSize: "14px",
-  minWidth: "220px",
 };
 
 const publicToolbarStyle = {
@@ -519,7 +527,7 @@ const publicFamilyStyle = {
   border: "2px solid #dbe3ec",
   borderRadius: "24px",
   boxSizing: "border-box",
-  padding: "16px",
+  padding: "12px",
   boxShadow: "0 10px 24px rgba(0,0,0,0.05)",
 };
 
@@ -530,7 +538,7 @@ const publicFamilyRootStyle = {
   border: "2px solid #86efac",
   borderRadius: "24px",
   boxSizing: "border-box",
-  padding: "16px",
+  padding: "12px",
   boxShadow: "0 10px 24px rgba(0,0,0,0.05)",
 };
 
@@ -540,16 +548,16 @@ const publicHighlightedStyle = {
 };
 
 const publicHeaderStyle = {
-  fontSize: "14px",
+  fontSize: "13px",
   fontWeight: "800",
   color: "#334155",
-  marginBottom: "14px",
+  marginBottom: "10px",
   textAlign: "center",
 };
 
 const publicFamilyRowStyle = {
   display: "flex",
-  gap: "12px",
+  gap: "8px",
   alignItems: "stretch",
   justifyContent: "center",
 };
@@ -560,36 +568,36 @@ const publicFamilySingleStyle = {
 };
 
 const publicLinkWrapStyle = {
-  width: "20px",
+  width: "14px",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
 };
 
 const publicLinkStyle = {
-  width: "18px",
+  width: "14px",
   height: "4px",
   borderRadius: "999px",
   background: "#22c55e",
 };
 
 const publicPersonStyle = {
-  width: "150px",
-  minHeight: "200px",
+  width: "112px",
+  minHeight: "160px",
   background: "#fff",
   border: "1px solid #e5e7eb",
   borderRadius: "18px",
-  padding: "10px",
+  padding: "8px",
   boxSizing: "border-box",
 };
 
 const publicImageWrapStyle = {
   width: "100%",
-  height: "72px",
+  height: "60px",
   borderRadius: "12px",
   overflow: "hidden",
   background: "#f3f4f6",
-  marginBottom: "10px",
+  marginBottom: "8px",
 };
 
 const publicImageStyle = {
@@ -610,34 +618,34 @@ const publicImagePlaceholderStyle = {
 };
 
 const publicNameStyle = {
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: "800",
   color: "#111827",
   textAlign: "center",
   lineHeight: 1.15,
-  minHeight: "32px",
+  minHeight: "28px",
   marginBottom: "8px",
 };
 
 const publicInfoStyle = {
-  minHeight: "46px",
+  minHeight: "40px",
   borderRadius: "10px",
   background: "#f8fafc",
-  padding: "8px",
-  fontSize: "10px",
+  padding: "6px",
+  fontSize: "9px",
   lineHeight: 1.35,
   color: "#334155",
   textAlign: "center",
-  marginBottom: "8px",
+  marginBottom: "6px",
 };
 
 const publicNotesStyle = {
-  fontSize: "10px",
+  fontSize: "9px",
   lineHeight: 1.35,
   color: "#475569",
   background: "#f8fafc",
   borderRadius: "10px",
-  padding: "8px",
+  padding: "6px",
 };
 
 const emptyStyle = {
@@ -658,16 +666,12 @@ const treeViewportStyle = {
   border: "1px solid #e5e7eb",
   overflow: "auto",
   height: "78vh",
+  touchAction: "none",
 };
 
-const treeCanvasWrapStyle = {
-  minWidth: "3400px",
-  minHeight: "2600px",
-};
+const treeCanvasWrapStyle = {};
 
 const svgStyle = {
   display: "block",
-  width: "3400px",
-  height: "2600px",
   userSelect: "none",
 };

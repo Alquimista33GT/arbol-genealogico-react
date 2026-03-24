@@ -1,78 +1,47 @@
 import { useEffect, useState } from "react";
-import { auth } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "./firebase";
 import Login from "./Login";
 import Home from "./Home";
-import PublicTreePage from "./PublicTreePage";
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-
-  const path = window.location.pathname;
-  const isPublicRoute = path.startsWith("/public/");
-  const publicSlug = isPublicRoute ? decodeURIComponent(path.replace("/public/", "")) : "";
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (isPublicRoute) {
-      setAuthLoading(false);
-      return;
-    }
-
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser || null);
-      setAuthLoading(false);
+      setLoading(false);
     });
-
     return () => unsub();
-  }, [isPublicRoute]);
+  }, []);
 
-  if (authLoading) {
+  if (loading) {
     return (
-      <div style={loadingPageStyle}>
-        <div style={loadingCardStyle}>Cargando aplicación...</div>
+      <div style={loadingWrap}>
+        <div style={loadingCard}>Cargando aplicación...</div>
       </div>
     );
   }
 
-  if (isPublicRoute) {
-    return <PublicTreePage slug={publicSlug} />;
-  }
-
-  if (!user) {
-    return (
-      <div style={loginPageStyle}>
-        <Login user={user} />
-      </div>
-    );
-  }
+  if (!user) return <Login />;
 
   return <Home user={user} />;
 }
 
-const loadingPageStyle = {
+const loadingWrap = {
   minHeight: "100vh",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background: "linear-gradient(180deg, #eefcf3 0%, #f7fff9 100%)",
-};
-
-const loadingCardStyle = {
-  background: "#fff",
-  padding: "24px 32px",
-  borderRadius: "18px",
-  boxShadow: "0 12px 35px rgba(0,0,0,0.08)",
-  fontSize: "18px",
-  fontWeight: "700",
-  color: "#1f2937",
-};
-
-const loginPageStyle = {
-  minHeight: "100vh",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  background: "linear-gradient(180deg, #eefcf3 0%, #f7fff9 100%)",
   padding: "20px",
+};
+
+const loadingCard = {
+  background: "rgba(255,255,255,0.9)",
+  border: "1px solid #d8e8dc",
+  boxShadow: "0 14px 40px rgba(24,63,40,0.08)",
+  borderRadius: "24px",
+  padding: "22px 28px",
+  fontWeight: 800,
 };

@@ -1,15 +1,30 @@
 import { useState } from "react";
-import { auth } from "./firebase";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  signOut,
 } from "firebase/auth";
+import { auth } from "./firebase";
+import logo from "./assets/logo-tree.png";
 
-export default function Login({ user }) {
+function getFriendlyError(error) {
+  const code = error?.code || "";
+  if (code === "auth/email-already-in-use") return "Ese correo ya está registrado.";
+  if (code === "auth/invalid-email") return "Correo inválido.";
+  if (code === "auth/weak-password") return "La contraseña debe tener al menos 6 caracteres.";
+  if (
+    code === "auth/invalid-credential" ||
+    code === "auth/user-not-found" ||
+    code === "auth/wrong-password"
+  ) {
+    return "Correo o contraseña incorrectos.";
+  }
+  return error?.message || "Ocurrió un error.";
+}
+
+export default function Login() {
+  const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState("login");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -19,288 +34,283 @@ export default function Login({ user }) {
     setLoading(true);
 
     try {
-      if (!email.trim() || !password.trim()) {
-        throw new Error("Completa correo y contraseña");
+      const cleanEmail = email.trim();
+      if (!cleanEmail || !password.trim()) {
+        throw new Error("Completa correo y contraseña.");
       }
 
       if (mode === "register") {
-        await createUserWithEmailAndPassword(auth, email.trim(), password);
+        await createUserWithEmailAndPassword(auth, cleanEmail, password);
       } else {
-        await signInWithEmailAndPassword(auth, email.trim(), password);
+        await signInWithEmailAndPassword(auth, cleanEmail, password);
       }
 
       setEmail("");
       setPassword("");
     } catch (err) {
-      console.error(err);
-
-      if (err.code === "auth/email-already-in-use") {
-        setError("Ese correo ya está registrado.");
-      } else if (err.code === "auth/invalid-email") {
-        setError("Correo inválido.");
-      } else if (err.code === "auth/weak-password") {
-        setError("La contraseña debe tener al menos 6 caracteres.");
-      } else if (
-        err.code === "auth/invalid-credential" ||
-        err.code === "auth/user-not-found" ||
-        err.code === "auth/wrong-password"
-      ) {
-        setError("Correo o contraseña incorrectos.");
-      } else {
-        setError(err.message || "Ocurrió un error.");
-      }
+      setError(getFriendlyError(err));
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleLogout() {
-    try {
-      await signOut(auth);
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo cerrar sesión.");
-    }
-  }
-
-  if (user) {
-    return (
-      <div style={loggedWrapStyle}>
-        <div style={loggedCardStyle}>
-          <div style={loggedTitleStyle}>Sesión iniciada</div>
-          <div style={loggedEmailStyle}>{user.email}</div>
-          <button style={logoutButtonStyle} onClick={handleLogout}>
-            Cerrar sesión
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={pageStyle}>
-      <div style={cardStyle}>
-        <div style={brandStyle}>Árbol Genealógico</div>
-        <h1 style={titleStyle}>
-          {mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
-        </h1>
-        <p style={subtitleStyle}>
-          Guarda tus árboles en la nube y accede desde cualquier navegador.
-        </p>
+    <div className="login-page">
+      <div style={pageWrap}>
+        <section style={heroBox}>
+          <div style={brandRow}>
+            <div style={logoBox}>
+              <img src={logo} alt="Logo Árbol Genealógico" style={logoStyle} />
+            </div>
+            <div>
+              <div style={brandPill}>Fase Pro</div>
+              <h1 style={heroTitle}>Árbol Genealógico</h1>
+              <p style={heroText}>
+                Guarda, organiza y visualiza tu familia en una interfaz más limpia,
+                rápida y optimizada para web y móvil.
+              </p>
+            </div>
+          </div>
 
-        <form onSubmit={handleSubmit} style={formStyle}>
-          <label style={labelStyle}>Correo electrónico</label>
-          <input
-            type="email"
-            placeholder="correo@ejemplo.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={inputStyle}
-          />
+          <div style={featureGrid}>
+            <div style={featureCard}>Diseño responsive</div>
+            <div style={featureCard}>Guardado en nube</div>
+            <div style={featureCard}>Vista limpia del árbol</div>
+            <div style={featureCard}>Listo para escalar</div>
+          </div>
+        </section>
 
-          <label style={labelStyle}>Contraseña</label>
-          <input
-            type="password"
-            placeholder="Mínimo 6 caracteres"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={inputStyle}
-          />
+        <section style={formCard}>
+          <div style={smallBrand}>Acceso seguro</div>
+          <h2 style={formTitle}>
+            {mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+          </h2>
+          <p style={formSubtitle}>
+            Usa tu cuenta para guardar tus árboles y abrirlos desde cualquier dispositivo.
+          </p>
 
-          {error ? <div style={errorStyle}>{error}</div> : null}
+          <form onSubmit={handleSubmit} style={formStyle}>
+            <label style={labelStyle}>Correo</label>
+            <input
+              type="email"
+              placeholder="correo@ejemplo.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={inputStyle}
+            />
 
-          <button type="submit" style={primaryButtonStyle} disabled={loading}>
-            {loading
-              ? "Procesando..."
-              : mode === "login"
-              ? "Entrar"
-              : "Crear cuenta"}
-          </button>
-        </form>
+            <label style={labelStyle}>Contraseña</label>
+            <input
+              type="password"
+              placeholder="Mínimo 6 caracteres"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={inputStyle}
+            />
 
-        <div style={footerRowStyle}>
-          {mode === "login" ? (
-            <>
-              <span style={footerTextStyle}>¿No tienes cuenta?</span>
-              <button
-                type="button"
-                style={linkButtonStyle}
-                onClick={() => {
-                  setMode("register");
-                  setError("");
-                }}
-              >
-                Crear cuenta
-              </button>
-            </>
-          ) : (
-            <>
-              <span style={footerTextStyle}>¿Ya tienes cuenta?</span>
-              <button
-                type="button"
-                style={linkButtonStyle}
-                onClick={() => {
-                  setMode("login");
-                  setError("");
-                }}
-              >
-                Iniciar sesión
-              </button>
-            </>
-          )}
-        </div>
+            {error ? <div style={errorStyle}>{error}</div> : null}
+
+            <button type="submit" style={primaryButton} disabled={loading}>
+              {loading ? "Procesando..." : mode === "login" ? "Entrar" : "Crear cuenta"}
+            </button>
+          </form>
+
+          <div style={switchWrap}>
+            <span style={switchText}>
+              {mode === "login" ? "¿No tienes cuenta?" : "¿Ya tienes cuenta?"}
+            </span>
+            <button
+              type="button"
+              style={switchButton}
+              onClick={() => {
+                setMode(mode === "login" ? "register" : "login");
+                setError("");
+              }}
+            >
+              {mode === "login" ? "Crear cuenta" : "Iniciar sesión"}
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-const pageStyle = {
-  width: "100%",
-  display: "flex",
-  justifyContent: "center",
+const pageWrap = {
+  minHeight: "100vh",
+  display: "grid",
+  gridTemplateColumns: "minmax(320px, 1.1fr) minmax(320px, 430px)",
+  gap: "20px",
+  alignItems: "center",
+  maxWidth: "1180px",
+  margin: "0 auto",
+  padding: "20px",
+};
+
+const heroBox = {
+  background: "rgba(255,255,255,0.62)",
+  backdropFilter: "blur(12px)",
+  border: "1px solid #d8e8dc",
+  boxShadow: "0 14px 40px rgba(24,63,40,0.08)",
+  borderRadius: "30px",
+  padding: "28px",
+};
+
+const brandRow = {
+  display: "grid",
+  gridTemplateColumns: "112px 1fr",
+  gap: "18px",
   alignItems: "center",
 };
 
-const cardStyle = {
-  width: "100%",
-  maxWidth: "430px",
+const logoBox = {
+  width: "112px",
+  height: "112px",
+  borderRadius: "30px",
   background: "#ffffff",
-  borderRadius: "24px",
-  padding: "28px",
-  boxShadow: "0 18px 40px rgba(0,0,0,0.10)",
-  border: "1px solid #e5e7eb",
-  fontFamily: "Arial, sans-serif",
+  border: "1px solid #d8e8dc",
+  boxShadow: "0 12px 34px rgba(24,63,40,0.08)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  overflow: "hidden",
 };
 
-const brandStyle = {
-  display: "inline-block",
-  padding: "8px 14px",
+const logoStyle = {
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+  padding: "8px",
+};
+
+const brandPill = {
+  display: "inline-flex",
+  padding: "8px 12px",
   borderRadius: "999px",
-  background: "#f0fdf4",
-  color: "#166534",
-  fontWeight: "700",
-  fontSize: "13px",
-  marginBottom: "16px",
+  background: "#eaf7ee",
+  color: "#187645",
+  fontWeight: 800,
+  fontSize: "12px",
+  marginBottom: "8px",
 };
 
-const titleStyle = {
+const heroTitle = {
+  margin: "0 0 10px",
+  fontSize: "clamp(32px, 4vw, 52px)",
+  lineHeight: 1.02,
+};
+
+const heroText = {
   margin: 0,
-  fontSize: "34px",
-  color: "#111827",
+  color: "#5f7a69",
+  fontSize: "16px",
+  lineHeight: 1.7,
 };
 
-const subtitleStyle = {
-  marginTop: "10px",
-  marginBottom: "22px",
-  color: "#64748b",
-  fontSize: "15px",
-  lineHeight: 1.45,
+const featureGrid = {
+  marginTop: "20px",
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: "12px",
+};
+
+const featureCard = {
+  background: "rgba(255,255,255,0.9)",
+  border: "1px solid #dceade",
+  borderRadius: "18px",
+  padding: "16px",
+  fontWeight: 800,
+  color: "#1d4d33",
+  textAlign: "center",
+};
+
+const formCard = {
+  background: "#ffffff",
+  border: "1px solid #d8e8dc",
+  boxShadow: "0 14px 40px rgba(24,63,40,0.08)",
+  borderRadius: "30px",
+  padding: "26px",
+};
+
+const smallBrand = {
+  display: "inline-flex",
+  padding: "8px 12px",
+  borderRadius: "999px",
+  background: "#f1f8f3",
+  color: "#1d6f41",
+  fontWeight: 800,
+  fontSize: "12px",
+};
+
+const formTitle = {
+  margin: "14px 0 8px",
+  fontSize: "32px",
+};
+
+const formSubtitle = {
+  margin: "0 0 18px",
+  color: "#5f7a69",
+  lineHeight: 1.6,
 };
 
 const formStyle = {
-  display: "flex",
-  flexDirection: "column",
+  display: "grid",
   gap: "10px",
 };
 
 const labelStyle = {
+  fontWeight: 800,
   fontSize: "14px",
-  fontWeight: "700",
-  color: "#1f2937",
 };
 
 const inputStyle = {
-  padding: "14px 14px",
-  borderRadius: "14px",
-  border: "1.5px solid #cbd5e1",
-  fontSize: "15px",
+  width: "100%",
+  padding: "14px 16px",
+  borderRadius: "16px",
+  border: "1px solid #d3e4d8",
   outline: "none",
   background: "#fff",
-  color: "#111827",
 };
 
 const errorStyle = {
-  marginTop: "4px",
-  padding: "12px 14px",
-  borderRadius: "12px",
   background: "#fef2f2",
-  border: "1px solid #fecaca",
   color: "#b91c1c",
+  border: "1px solid #fecaca",
+  padding: "12px 14px",
+  borderRadius: "14px",
+  fontWeight: 700,
   fontSize: "14px",
-  fontWeight: "600",
 };
 
-const primaryButtonStyle = {
-  marginTop: "8px",
-  padding: "14px 16px",
-  borderRadius: "14px",
+const primaryButton = {
+  marginTop: "6px",
+  padding: "14px 18px",
+  borderRadius: "16px",
   border: "none",
-  background: "#16a34a",
+  background: "linear-gradient(135deg, #1f9d55, #157841)",
   color: "#fff",
-  fontWeight: "700",
-  fontSize: "15px",
+  fontWeight: 900,
   cursor: "pointer",
 };
 
-const footerRowStyle = {
-  marginTop: "18px",
+const switchWrap = {
+  marginTop: "16px",
   display: "flex",
   gap: "8px",
   flexWrap: "wrap",
   alignItems: "center",
 };
 
-const footerTextStyle = {
-  color: "#64748b",
+const switchText = {
+  color: "#637c6c",
   fontSize: "14px",
 };
 
-const linkButtonStyle = {
+const switchButton = {
   border: "none",
   background: "transparent",
-  color: "#2563eb",
-  fontWeight: "700",
-  cursor: "pointer",
+  color: "#177545",
   padding: 0,
-  fontSize: "14px",
-};
-
-const loggedWrapStyle = {
-  width: "100%",
-  display: "flex",
-  justifyContent: "center",
-};
-
-const loggedCardStyle = {
-  background: "#fff",
-  border: "1px solid #e5e7eb",
-  borderRadius: "18px",
-  padding: "18px",
-  boxShadow: "0 10px 24px rgba(0,0,0,0.06)",
-  minWidth: "320px",
-  textAlign: "center",
-  fontFamily: "Arial, sans-serif",
-};
-
-const loggedTitleStyle = {
-  fontSize: "18px",
-  fontWeight: "800",
-  color: "#111827",
-};
-
-const loggedEmailStyle = {
-  marginTop: "8px",
-  color: "#475569",
-  fontSize: "14px",
-  marginBottom: "14px",
-};
-
-const logoutButtonStyle = {
-  padding: "12px 16px",
-  borderRadius: "12px",
-  border: "none",
-  background: "#dc2626",
-  color: "#fff",
-  fontWeight: "700",
+  fontWeight: 900,
   cursor: "pointer",
 };
