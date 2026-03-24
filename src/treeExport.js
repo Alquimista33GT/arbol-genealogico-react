@@ -4,16 +4,18 @@ function getTreeElement(target) {
   if (target && typeof target === "object" && "current" in target) {
     return target.current;
   }
-  return target || document.querySelector(".tree-canvas");
+  return target || document.querySelector(".ft-map-transform");
 }
 
-function sanitizeFileName(name = "arbol-genealogico") {
-  return String(name)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9áéíóúñü\s_-]/gi, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-") || "arbol-genealogico";
+function sanitizeFileName(name = "akna-arbol-genealogico") {
+  return (
+    String(name)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9áéíóúñü\s_-]/gi, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-") || "akna-arbol-genealogico"
+  );
 }
 
 function isMobileDevice() {
@@ -147,7 +149,7 @@ async function shareFile(blob, filename, mimeType) {
     const file = new File([blob], filename, { type: mimeType });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({
-        title: "Árbol Genealógico",
+        title: "Akna Árbol Genealógico",
         files: [file],
       });
       return true;
@@ -156,11 +158,11 @@ async function shareFile(blob, filename, mimeType) {
   return false;
 }
 
-export async function exportTreeAsImage(target, fileName = "arbol-genealogico") {
+export async function exportTreeAsImage(target, fileName = "akna-arbol-genealogico") {
   const element = getTreeElement(target);
 
   if (!element) {
-    alert("No se encontró el árbol para exportar.");
+    alert("No se encontró el mapa para exportar.");
     return;
   }
 
@@ -175,9 +177,7 @@ export async function exportTreeAsImage(target, fileName = "arbol-genealogico") 
 
     if (isMobileDevice()) {
       const shared = await shareFile(blob, filename, "image/png");
-      if (!shared) {
-        downloadBlob(blob, filename);
-      }
+      if (!shared) downloadBlob(blob, filename);
       return;
     }
 
@@ -188,11 +188,11 @@ export async function exportTreeAsImage(target, fileName = "arbol-genealogico") 
   }
 }
 
-export async function exportTreeAsPdf(target, fileName = "arbol-genealogico") {
+export async function exportTreeAsPdf(target, fileName = "akna-arbol-genealogico") {
   const element = getTreeElement(target);
 
   if (!element) {
-    alert("No se encontró el árbol para exportar.");
+    alert("No se encontró el mapa para exportar.");
     return;
   }
 
@@ -218,9 +218,7 @@ export async function exportTreeAsPdf(target, fileName = "arbol-genealogico") {
     if (isMobileDevice()) {
       const pdfBlob = pdf.output("blob");
       const shared = await shareFile(pdfBlob, filename, "application/pdf");
-      if (!shared) {
-        pdf.save(filename);
-      }
+      if (!shared) pdf.save(filename);
       return;
     }
 

@@ -15,7 +15,7 @@ function initialsFromText(text) {
   return parts.map((part) => part[0]?.toUpperCase() || "").join("") || "U";
 }
 
-export default function Home({ user }) {
+export default function Home({ user, isMobile = false }) {
   const [view, setView] = useState("home");
   const displayName = useMemo(() => displayNameFromUser(user), [user]);
   const initials = useMemo(() => initialsFromText(displayName), [displayName]);
@@ -30,32 +30,64 @@ export default function Home({ user }) {
   }
 
   if (view === "tree") {
-    return <FamilyTreeApp user={user} onBack={() => setView("home")} onLogout={handleLogout} />;
+    return (
+      <FamilyTreeApp
+        user={user}
+        onBack={() => setView("home")}
+        onLogout={handleLogout}
+      />
+    );
   }
 
   return (
-    <div style={pageStyle}>
-      <div style={containerStyle}>
-        <section style={heroStyle}>
-          <div style={leftHero}>
+    <div className="home-page" style={pageStyle}>
+      <div style={{ ...containerStyle, maxWidth: isMobile ? "100%" : "1240px" }}>
+        <section
+          style={{
+            ...heroStyle,
+            gridTemplateColumns: isMobile
+              ? "1fr"
+              : "minmax(340px, 1.2fr) minmax(280px, 0.85fr)",
+            gap: isMobile ? "14px" : "18px",
+          }}
+        >
+          <div style={{ ...leftHero, padding: isMobile ? "20px" : "30px" }}>
             <div style={heroBadge}>Panel principal</div>
-            <h1 style={heroTitle}>Bienvenido, {displayName}</h1>
+            <h1
+              style={{
+                ...heroTitle,
+                fontSize: isMobile ? "clamp(28px, 9vw, 42px)" : "clamp(34px, 5vw, 56px)",
+              }}
+            >
+              Bienvenido, {displayName}
+            </h1>
             <p style={heroText}>
               Administra tus árboles con una experiencia visual más elegante,
               adaptable a móvil y lista para seguir creciendo.
             </p>
 
-            <div style={heroButtons}>
-              <button style={primaryBtn} onClick={() => setView("tree")}>
+            <div
+              style={{
+                ...heroButtons,
+                flexDirection: isMobile ? "column" : "row",
+              }}
+            >
+              <button
+                style={{ ...primaryBtn, width: isMobile ? "100%" : "auto", minHeight: isMobile ? "54px" : undefined }}
+                onClick={() => setView("tree")}
+              >
                 Entrar al árbol
               </button>
-              <button style={secondaryBtn} onClick={handleLogout}>
+              <button
+                style={{ ...secondaryBtn, width: isMobile ? "100%" : "auto", minHeight: isMobile ? "54px" : undefined }}
+                onClick={handleLogout}
+              >
                 Cerrar sesión
               </button>
             </div>
           </div>
 
-          <div style={profileCard}>
+          <div style={{ ...profileCard, padding: isMobile ? "20px" : "24px" }}>
             <div style={profileHeader}>
               <div style={logoWrap}>
                 <img src={logo} alt="Logo" style={logoStyle} />
@@ -87,7 +119,13 @@ export default function Home({ user }) {
           </div>
         </section>
 
-        <section style={cardsGrid}>
+        <section
+          style={{
+            ...cardsGrid,
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: isMobile ? "14px" : "16px",
+          }}
+        >
           <article style={featureCard}>
             <div style={cardIcon}>🌳</div>
             <h3 style={cardTitle}>Árbol visual</h3>
@@ -119,18 +157,17 @@ export default function Home({ user }) {
 
 const pageStyle = {
   minHeight: "100vh",
-  padding: "20px",
+  padding: "14px",
+  overflowX: "hidden",
 };
 
 const containerStyle = {
-  maxWidth: "1240px",
   margin: "0 auto",
+  width: "100%",
 };
 
 const heroStyle = {
   display: "grid",
-  gridTemplateColumns: "minmax(340px, 1.2fr) minmax(280px, 0.85fr)",
-  gap: "18px",
   alignItems: "stretch",
 };
 
@@ -140,7 +177,7 @@ const leftHero = {
   border: "1px solid #d8e8dc",
   boxShadow: "0 14px 40px rgba(24,63,40,0.08)",
   borderRadius: "30px",
-  padding: "30px",
+  minWidth: 0,
 };
 
 const heroBadge = {
@@ -156,8 +193,8 @@ const heroBadge = {
 
 const heroTitle = {
   margin: "0 0 12px",
-  fontSize: "clamp(34px, 5vw, 56px)",
   lineHeight: 1.02,
+  wordBreak: "break-word",
 };
 
 const heroText = {
@@ -200,7 +237,7 @@ const profileCard = {
   border: "1px solid #d8e8dc",
   boxShadow: "0 14px 40px rgba(24,63,40,0.08)",
   borderRadius: "30px",
-  padding: "24px",
+  minWidth: 0,
 };
 
 const profileHeader = {
@@ -237,12 +274,14 @@ const avatar = {
   justifyContent: "center",
   fontWeight: 900,
   fontSize: "20px",
+  flexShrink: 0,
 };
 
 const profileName = {
   marginTop: "18px",
   fontWeight: 900,
   fontSize: "24px",
+  wordBreak: "break-word",
 };
 
 const profileEmail = {
@@ -263,6 +302,7 @@ const statCard = {
   border: "1px solid #e1efe5",
   borderRadius: "18px",
   padding: "14px",
+  minWidth: 0,
 };
 
 const statLabel = {
@@ -275,13 +315,12 @@ const statValue = {
   marginTop: "4px",
   fontWeight: 900,
   fontSize: "17px",
+  wordBreak: "break-word",
 };
 
 const cardsGrid = {
   marginTop: "18px",
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-  gap: "16px",
 };
 
 const featureCard = {
@@ -290,6 +329,7 @@ const featureCard = {
   boxShadow: "0 14px 40px rgba(24,63,40,0.08)",
   borderRadius: "26px",
   padding: "22px",
+  minWidth: 0,
 };
 
 const cardIcon = {

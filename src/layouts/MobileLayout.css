@@ -1,0 +1,28 @@
+.mobile-layout,
+.mobile-layout * {
+  box-sizing: border-box;
+}
+
+.mobile-layout {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.mobile-layout .ft-lines path,
+.mobile-layout .ft-lines line,
+.mobile-layout .ft-lines polyline {
+  stroke-width: 3.2px !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  vector-effect: non-scaling-stroke !important;
+  shape-rendering: geometricPrecision !important;
+}
+
+@media (max-width: 600px) {
+  .mobile-layout .ft-lines path,
+  .mobile-layout .ft-lines line,
+  .mobile-layout .ft-lines polyline {
+    stroke-width: 3.6px !important;
+  }
+}
