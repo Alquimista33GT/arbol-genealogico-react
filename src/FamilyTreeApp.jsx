@@ -6,10 +6,9 @@ import {
   removeTree,
   saveTree,
 } from "./services/treeService";
-import { exportTreeAsImage, exportTreeAsPdf } from "./treeExport";
-import { copyReadOnlyTreeLink } from "./services/treeShare";
 import "./FamilyTreeApp.css";
 import logo from "./assets/logo-tree.png";
+import { buildMetaShareUrl } from "./services/treeShare";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -532,23 +531,13 @@ function PersonModal({ open, form, setForm, people, onClose, onSave, onDeleteCur
   );
 }
 
-export default function FamilyTreeApp({
-  user,
-  onBack,
-  onLogout,
-  readOnly = false,
-  initialSharedTree = null,
-}) {
+export default function FamilyTreeApp({ user, onBack, onLogout, readOnly = false, initialSharedTree = null }) {
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 900 : false
   );
   const [currentTreeId, setCurrentTreeId] = useState("");
-  const [treeName, setTreeName] = useState(
-    readOnly ? normalizeText(initialSharedTree?.treeName || "Árbol compartido") : "Mi árbol familiar"
-  );
-  const [people, setPeople] = useState(
-    readOnly && Array.isArray(initialSharedTree?.people) ? initialSharedTree.people : []
-  );
+  const [treeName, setTreeName] = useState(initialSharedTree?.treeName || "Mi árbol familiar");
+  const [people, setPeople] = useState(initialSharedTree?.people || []);
   const [zoom, setZoom] = useState(isMobile ? 0.82 : 1);
   const [searchText, setSearchText] = useState("");
   const [activeProfileId, setActiveProfileId] = useState("");
@@ -562,7 +551,7 @@ export default function FamilyTreeApp({
 
   const viewportRef = useRef(null);
   const mapShellRef = useRef(null);
-  const mapExportRef = useRef(null);
+  const mapOnlyRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const toastTimeoutRef = useRef(null);
 
@@ -586,7 +575,6 @@ export default function FamilyTreeApp({
 
   useEffect(() => {
     if (readOnly) return;
-
     const local = localStorage.getItem("ft-local-tree");
     if (!local) return;
 
@@ -607,7 +595,6 @@ export default function FamilyTreeApp({
 
   useEffect(() => {
     if (readOnly) return;
-
     let alive = true;
 
     async function loadCloud() {
@@ -640,7 +627,6 @@ export default function FamilyTreeApp({
 
   const persistTreeToCloud = useCallback(async (options = {}) => {
     if (readOnly) return false;
-
     const { silent = false, source = "auto" } = options;
     const payload = {
       name: normalizeText(treeName).trim() || "Mi árbol familiar",
@@ -694,7 +680,6 @@ export default function FamilyTreeApp({
 
   useEffect(() => {
     if (readOnly) return;
-
     localStorage.setItem("ft-local-tree", JSON.stringify({ treeName, people }));
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -722,25 +707,42 @@ export default function FamilyTreeApp({
   const activeLayout = activeProfileId ? cards[activeProfileId] : null;
   const searchLower = searchText.trim().toLowerCase();
 
-  async function handleShareReadOnly() {
+  const patriarchName = autoLayout.patriarch?.name || "Sin patriarca";
+
+  const shareUrl = useMemo(() => {
+    if (readOnly) return typeof window !== "undefined" ? window.location.href : "";
+    return buildMetaShareUrl({
+      treeName,
+      people,
+      profileName: user?.email?.split("@")[0] || user?.displayName || "usuario",
+      sourceUrl: typeof window !== "undefined" ? window.location.origin : "",
+    });
+  }, [readOnly, treeName, people, user]);
+
+  async function handleCopyTreeLink() {
     try {
-      const url = await copyReadOnlyTreeLink({ treeName, people });
-      setStatusText("Enlace lectura copiado");
-      showSaveToast("Enlace de solo lectura copiado", "saved", 2200);
-      return url;
+      await navigator.clipboard.writeText(shareUrl);
+      setStatusText("Enlace copiado");
+      showSaveToast("Enlace copiado", "saved", 1800);
     } catch (error) {
       console.error(error);
-      alert("No se pudo crear el enlace de lectura.");
-      return "";
+      alert("No se pudo copiar el enlace.");
     }
   }
 
-  async function handleCreateImage() {
-    await exportTreeAsImage(mapExportRef, treeName || "akna-arbol-genealogico");
-  }
-
-  async function handleCreatePdf() {
-    await exportTreeAsPdf(mapExportRef, treeName || "akna-arbol-genealogico");
+  async function handleShareReadOnly() {
+    try {
+      await handleCopyTreeLink();
+      if (navigator.share) {
+        await navigator.share({
+          title: `Árbol de ${user?.email?.split("@")[0] || "usuario"}`,
+          text: `${user?.email?.split("@")[0] || "Este perfil"} acaba de crear su árbol. Mira si eres su familiar.`,
+          url: shareUrl,
+        });
+      }
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   async function handleManualSave() {
@@ -755,7 +757,7 @@ export default function FamilyTreeApp({
   }
 
   function handleSavePerson() {
-    if (readOnly || !form.name.trim()) return;
+    if (!form.name.trim()) return;
 
     const nextPerson = { ...form, id: form.id || uid() };
 
@@ -781,7 +783,7 @@ export default function FamilyTreeApp({
   }
 
   function handleDeletePerson(personId) {
-    if (readOnly || !window.confirm("¿Eliminar este familiar?")) return;
+    if (!window.confirm("¿Eliminar este familiar?")) return;
 
     setPeople((prev) =>
       prev
@@ -799,7 +801,6 @@ export default function FamilyTreeApp({
   }
 
   function handleEditPerson(person) {
-    if (readOnly) return;
     setForm({ ...emptyPerson(), ...person });
     setPersonModalOpen(true);
   }
@@ -843,12 +844,20 @@ export default function FamilyTreeApp({
     }
   }
 
+  async function handleExportImage() {
+    const mod = await import("./treeExport");
+    await mod.exportTreeAsImage(mapOnlyRef, treeName || "akna-arbol");
+  }
+
+  async function handleExportPdf() {
+    const mod = await import("./treeExport");
+    await mod.exportTreeAsPdf(mapOnlyRef, treeName || "akna-arbol");
+  }
+
   useEffect(() => {
     const timeout = setTimeout(handleAutoCenter, 80);
     return () => clearTimeout(timeout);
   }, [autoLayout.width, autoLayout.height, zoom]);
-
-  const patriarchName = autoLayout.patriarch?.name || "Sin patriarca";
 
   return (
     <div className="ft-shell">
@@ -861,7 +870,7 @@ export default function FamilyTreeApp({
             <div className="ft-title">Akna Árbol Genealógico</div>
             <div className="ft-subtitle">
               {readOnly
-                ? "Vista compartida de solo lectura"
+                ? "Mapa compartido en modo solo lectura"
                 : `Espacio personal de ${user?.email?.split("@")[0] || "usuario"}`}
             </div>
           </div>
@@ -869,7 +878,7 @@ export default function FamilyTreeApp({
 
         <div className="ft-top-actions">
           <button type="button" className="ft-btn ft-btn-light" onClick={onBack}>
-            {readOnly ? "Salir vista lectura" : "Volver al inicio"}
+            {readOnly ? "Salir" : "Volver al inicio"}
           </button>
           {!readOnly ? (
             <button type="button" className="ft-btn ft-btn-danger" onClick={onLogout}>
@@ -879,25 +888,24 @@ export default function FamilyTreeApp({
         </div>
       </header>
 
-      <section className="ft-toolbar">
-        <div className="ft-toolbar-left">
-          <input
-            className="ft-search"
-            placeholder="Buscar familiar"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-          />
-        </div>
+      {!readOnly ? (
+        <section className="ft-toolbar">
+          <div className="ft-toolbar-left">
+            <input
+              className="ft-search"
+              placeholder="Buscar familiar"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
 
-        <div className="ft-toolbar-right">
-          <input
-            className="ft-tree-name"
-            value={treeName}
-            onChange={(e) => setTreeName(e.target.value)}
-            disabled={readOnly}
-          />
-          <div className={`ft-status ${isSaving ? "is-saving" : ""}`}>{statusText}</div>
-          {!readOnly ? (
+          <div className="ft-toolbar-right">
+            <input
+              className="ft-tree-name"
+              value={treeName}
+              onChange={(e) => setTreeName(e.target.value)}
+            />
+            <div className={`ft-status ${isSaving ? "is-saving" : ""}`}>{statusText}</div>
             <button
               type="button"
               className="ft-btn ft-btn-primary"
@@ -906,57 +914,54 @@ export default function FamilyTreeApp({
             >
               {isSaving ? "Guardando..." : "Guardar"}
             </button>
-          ) : null}
-          {!readOnly && currentTreeId ? (
-            <button
-              type="button"
-              className="ft-btn ft-btn-light"
-              onClick={async () => {
-                if (!window.confirm("¿Eliminar este árbol?")) return;
-                try {
-                  await removeTree(ownerId, currentTreeId);
-                } catch (error) {
-                  console.error(error);
-                }
-                setCurrentTreeId("");
-                setPeople([]);
-              }}
-            >
-              Reiniciar
-            </button>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="ft-share-panel">
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="ft-share-title">
-            {readOnly ? "Mapa compartido" : "Compartir árbol"}
+            {currentTreeId ? (
+              <button
+                type="button"
+                className="ft-btn ft-btn-light"
+                onClick={async () => {
+                  if (!window.confirm("¿Eliminar este árbol?")) return;
+                  try {
+                    await removeTree(ownerId, currentTreeId);
+                  } catch (error) {
+                    console.error(error);
+                  }
+                  setCurrentTreeId("");
+                  setPeople([]);
+                }}
+              >
+                Reiniciar
+              </button>
+            ) : null}
           </div>
-          <div className="ft-share-subtitle">
-            {readOnly
-              ? "Este enlace muestra únicamente el mapa en modo lectura."
-              : "Crea un enlace de solo lectura, genera imagen o exporta PDF del mapa."}
-          </div>
-        </div>
+        </section>
+      ) : null}
 
-        <div className="ft-share-actions">
-          {!readOnly ? (
-            <button type="button" className="ft-btn ft-btn-primary" onClick={handleShareReadOnly}>
-              Compartir lectura
+      {!readOnly ? (
+        <section className="ft-share-panel">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="ft-share-title">Compartir árbol</div>
+            <div className="ft-share-subtitle">
+              Enlace público con miniatura social, mapa solamente y modo solo lectura.
+            </div>
+            <div className="ft-share-link" title={shareUrl}>{shareUrl}</div>
+          </div>
+
+          <div className="ft-share-actions">
+            <button type="button" className="ft-btn ft-btn-primary" onClick={handleCopyTreeLink}>
+              Copiar enlace
             </button>
-          ) : null}
-          <button type="button" className="ft-btn ft-btn-light" onClick={handleCreateImage}>
-            Crear imagen
-          </button>
-          <button type="button" className="ft-btn ft-btn-light" onClick={handleCreatePdf}>
-            Crear PDF
-          </button>
-          <button type="button" className="ft-btn ft-btn-light" onClick={handleAutoCenter}>
-            Centrar
-          </button>
-        </div>
-      </section>
+            <button type="button" className="ft-btn ft-btn-light" onClick={handleShareReadOnly}>
+              Compartir
+            </button>
+            <button type="button" className="ft-btn ft-btn-light" onClick={handleExportImage}>
+              Crear imagen
+            </button>
+            <button type="button" className="ft-btn ft-btn-light" onClick={handleExportPdf}>
+              Crear PDF
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="ft-info-band">
         Flujo único desde el patriarca: <strong>{patriarchName}</strong>. Cada nueva pareja se mantiene en bloque y los descendientes siguen hacia abajo.
@@ -1000,7 +1005,7 @@ export default function FamilyTreeApp({
             style={{ width: autoLayout.width * zoom, height: autoLayout.height * zoom }}
           >
             <div
-              ref={mapExportRef}
+              ref={mapOnlyRef}
               className="ft-map-transform"
               style={{
                 transform: `scale(${zoom})`,

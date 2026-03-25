@@ -42,20 +42,50 @@ function decodeUnicode(value) {
   return decodeURIComponent(escape(atob(value)));
 }
 
-export function buildReadOnlyTreeUrl({ treeName = "Mi árbol familiar", people = [] }) {
-  if (typeof window === "undefined") return "";
-
-  const payload = {
+export function createSharePayload({ treeName = "Mi árbol familiar", people = [], profileName = "usuario" }) {
+  return {
     version: 1,
     readOnly: true,
     treeName: normalizeText(treeName).trim() || "Mi árbol familiar",
+    profileName: normalizeText(profileName).trim() || "usuario",
     people: cleanPeopleForShare(people),
   };
+}
 
-  const encoded = encodeUnicode(JSON.stringify(payload));
+export function encodeSharePayload(payload) {
+  return encodeUnicode(JSON.stringify(payload));
+}
+
+export function decodeSharePayload(encoded) {
+  try {
+    const raw = decodeUnicode(encoded);
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error("No se pudo decodificar el árbol compartido:", error);
+    return null;
+  }
+}
+
+export function buildReadOnlyTreeUrl({ treeName = "Mi árbol familiar", people = [], profileName = "usuario" }) {
+  if (typeof window === "undefined") return "";
+
+  const payload = createSharePayload({ treeName, people, profileName });
+  const encoded = encodeSharePayload(payload);
+
   const url = new URL(window.location.origin + window.location.pathname);
   url.searchParams.set("view", "map");
   url.hash = `tree=${encoded}`;
+  return url.toString();
+}
+
+export function buildMetaShareUrl({ treeName = "Mi árbol familiar", people = [], profileName = "usuario", sourceUrl = "" }) {
+  if (!sourceUrl) return "";
+  const payload = createSharePayload({ treeName, people, profileName });
+  const encoded = encodeURIComponent(encodeSharePayload(payload));
+  const url = new URL("/api/share-tree", sourceUrl);
+  url.searchParams.set("data", encoded);
+  url.searchParams.set("name", payload.treeName);
+  url.searchParams.set("profile", payload.profileName);
   return url.toString();
 }
 
@@ -69,38 +99,13 @@ export function parseReadOnlyTreeFromLocation() {
 
   if (url.searchParams.get("view") !== "map" || !encoded) return null;
 
-  try {
-    const raw = decodeUnicode(encoded);
-    const parsed = JSON.parse(raw);
+  const parsed = decodeSharePayload(encoded);
+  if (!parsed) return null;
 
-    return {
-      readOnly: true,
-      treeName: normalizeText(parsed?.treeName).trim() || "Árbol compartido",
-      people: cleanPeopleForShare(parsed?.people || []),
-    };
-  } catch (error) {
-    console.error("No se pudo leer el árbol compartido:", error);
-    return null;
-  }
-}
-
-export async function copyReadOnlyTreeLink({ treeName, people }) {
-  const url = buildReadOnlyTreeUrl({ treeName, people });
-  if (!url) throw new Error("No se pudo crear el enlace.");
-
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(url);
-    return url;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = url;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "absolute";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
-  return url;
+  return {
+    readOnly: true,
+    treeName: normalizeText(parsed?.treeName).trim() || "Árbol compartido",
+    profileName: normalizeText(parsed?.profileName).trim() || "usuario",
+    people: cleanPeopleForShare(parsed?.people || []),
+  };
 }
